@@ -1,0 +1,51 @@
+cmake_minimum_required(VERSION 3.20)
+project(NicManager VERSION 0.1.0 LANGUAGES CXX RC)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Changing adapter settings needs admin rights. Turn this OFF for a
+# debug build that you want to start from a non-elevated VS Code (the UI,
+# ping list and presets work; applying changes then fails with a message).
+option(NICMGR_REQUIRE_ADMIN "Embed a manifest that requests elevation" ON)
+if(NICMGR_REQUIRE_ADMIN)
+    set(NICMGR_EXEC_LEVEL requireAdministrator)
+else()
+    set(NICMGR_EXEC_LEVEL asInvoker)
+endif()
+
+configure_file(res/app.manifest.in ${CMAKE_CURRENT_BINARY_DIR}/app.manifest @ONLY)
+configure_file(res/app.rc.in ${CMAKE_CURRENT_BINARY_DIR}/app.rc @ONLY)
+
+add_executable(NicManager WIN32
+    src/main.cpp
+    src/mainwindow.cpp
+    src/dialogs.cpp
+    src/netinfo.cpp
+    src/netcmd.cpp
+    src/pinger.cpp
+    src/settings.cpp
+    src/json.cpp
+    src/ipaddr.cpp
+    src/actions.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/app.rc
+)
+target_include_directories(NicManager PRIVATE src res)
+target_compile_definitions(NicManager PRIVATE
+    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
+    _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A000000)
+
+# All system libraries that ship with Windows; no third-party dependencies.
+target_link_libraries(NicManager PRIVATE
+    iphlpapi ws2_32 setupapi cfgmgr32 comctl32 comdlg32 shell32 advapi32 crypt32 uxtheme dwmapi)
+
+if(MSVC)
+    target_compile_options(NicManager PRIVATE /W4 /permissive- /utf-8 /MP)
+    target_link_options(NicManager PRIVATE /MANIFEST:NO)  # manifest comes from app.rc
+    # Static CRT: the exe runs without the VC++ redistributable.
+    set_property(TARGET NicManager PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+else()  # MinGW-w64
+    target_compile_options(NicManager PRIVATE -Wall -Wextra -Wno-cast-function-type -Wno-missing-field-initializers)
+    target_link_options(NicManager PRIVATE -municode -static)
+endif()

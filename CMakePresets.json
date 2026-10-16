@@ -1,0 +1,37 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "vs-base",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "x64",
+      "displayName": "Windows x64 (MSVC)",
+      "inherits": "vs-base",
+      "architecture": "x64"
+    },
+    {
+      "name": "x86",
+      "displayName": "Windows x86 / 32-bit (MSVC)",
+      "inherits": "vs-base",
+      "architecture": "Win32"
+    },
+    {
+      "name": "x64-noadmin",
+      "displayName": "Windows x64, no elevation (debugging UI only)",
+      "inherits": "vs-base",
+      "architecture": "x64",
+      "cacheVariables": { "NICMGR_REQUIRE_ADMIN": "OFF" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "x64-debug", "configurePreset": "x64", "configuration": "Debug" },
+    { "name": "x64-release", "configurePreset": "x64", "configuration": "Release" },
+    { "name": "x86-debug", "configurePreset": "x86", "configuration": "Debug" },
+    { "name": "x86-release", "configurePreset": "x86", "configuration": "Release" },
+    { "name": "x64-noadmin-debug", "configurePreset": "x64-noadmin", "configuration": "Debug" }
+  ]
+}
