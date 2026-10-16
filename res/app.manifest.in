@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!-- Generated from res/app.manifest.in by CMake. -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="NicManager" version="@PROJECT_VERSION@.0"/>
+  <assemblyIdentity type="win32" name="NicManager" version="@PROJECT_VERSION@"/>
   <description>NIC Manager</description>
   <dependency>
     <dependentAssembly>

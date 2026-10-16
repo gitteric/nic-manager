@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(NicManager VERSION 0.1.0 LANGUAGES CXX RC)
+# Four-part version (major.minor.patch.build). The release workflow passes
+# it from the git tag, e.g. v1.0.0.0 -> -DNICMGR_VERSION=1.0.0.0.
+set(NICMGR_VERSION "1.0.0.0" CACHE STRING "Version embedded in the executable")
+project(NicManager VERSION ${NICMGR_VERSION} LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
