@@ -2,3 +2,6 @@ build/
 .vs/
 *.user
 dist/
+signing/
+*.pfx
+__pycache__/

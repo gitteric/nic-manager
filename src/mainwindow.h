@@ -22,7 +22,7 @@ public:
     static constexpr UINT WM_APP_SHOW = WM_APP + 50;  // sent by a second instance
 
     // demo: show sample adapters and simulate commands instead of running them.
-    bool Create(HINSTANCE inst, bool demo = false);
+    bool Create(HINSTANCE inst, bool demo = false, bool minimized = false);
 
 private:
     // ---- layout model ----
@@ -31,7 +31,7 @@ private:
         ToggleEnabled, ToggleDhcp, ToggleAutoDns,
         EditAddr, DelAddr, AddAddr, EditGw, DelGw, AddGw, EditDns, DelDns, AddDns,
         AddHost, EditHost, DelHost, AddAction, RunAction, EditAction, DelAction,
-        OpenNcpa, OpenWifi, FlushDns, RenewDhcp, Hide, Minimize,
+        OpenNcpa, OpenWifi, FlushDns, RenewDhcp, Hide, Exit, Minimize,
     };
     enum class EditKind { None, Address, NewAddress, Gateway, NewGateway, Dns, NewDns, Host, NewHost };
     enum class RowKind { Header, Adapter, Toggle, Caption, Value, Host, Action, Hint };
@@ -147,9 +147,12 @@ private:
     // menus
     void ShowTrayMenu();
     void ShowAdapterMenu(int ai, POINT screen);
-    void ShowWindowNear();
+    void ShowWindowNear(bool show = true);
     void ToggleVisible();
     void ShowRestored();
+    void ToggleCertificate(bool installed);
+    void SetUpStartTask();
+    void RemoveStartTask();
     void ApplyTaskbarMode();  // taskbar button only while not minimizing to tray
     void OpenPresetEditor();
 
@@ -166,6 +169,7 @@ private:
     UINT m_taskbarCreated = 0;
     bool m_elevated = false;
     bool m_demo = false;
+    int m_startTask = -1;  // -1 unknown, 0 none, 1 on demand, 2 on demand + autostart
 
     AppSettings m_settings;
     std::vector<Adapter> m_adapters;

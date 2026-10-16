@@ -106,6 +106,36 @@ INT_PTR CALLBACK PromptProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     return DarkColors(msg, wp);
 }
 
+// ---- start task ---------------------------------------------------------
+
+struct StartTaskData {
+    bool* autostart;
+    bool* shortcut;
+};
+
+INT_PTR CALLBACK StartTaskProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* d = reinterpret_cast<StartTaskData*>(GetWindowLongPtrW(dlg, DWLP_USER));
+    switch (msg) {
+    case WM_INITDIALOG:
+        d = reinterpret_cast<StartTaskData*>(lp);
+        SetWindowLongPtrW(dlg, DWLP_USER, lp);
+        CheckDlgButton(dlg, IDC_AUTOSTART, *d->autostart ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(dlg, IDC_SHORTCUT, *d->shortcut ? BST_CHECKED : BST_UNCHECKED);
+        InitDark(dlg);
+        return TRUE;
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDOK) {
+            *d->autostart = IsDlgButtonChecked(dlg, IDC_AUTOSTART) == BST_CHECKED;
+            *d->shortcut = IsDlgButtonChecked(dlg, IDC_SHORTCUT) == BST_CHECKED;
+            EndDialog(dlg, IDOK);
+        } else if (LOWORD(wp) == IDCANCEL) {
+            EndDialog(dlg, IDCANCEL);
+        }
+        return TRUE;
+    }
+    return DarkColors(msg, wp);
+}
+
 // ---- host entry ---------------------------------------------------------
 
 struct HostData {
@@ -451,6 +481,12 @@ std::optional<std::wstring> PromptText(HWND owner, const std::wstring& title, co
                         (LPARAM)&d) != IDOK)
         return std::nullopt;
     return d.text;
+}
+
+bool AskStartTask(HWND owner, bool& autostart, bool& shortcut) {
+    StartTaskData d{&autostart, &shortcut};
+    return DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_STARTTASK), owner, StartTaskProc,
+                           (LPARAM)&d) == IDOK;
 }
 
 bool EditHost(HWND owner, std::wstring& name, std::wstring& address) {

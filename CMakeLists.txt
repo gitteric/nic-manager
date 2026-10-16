@@ -18,6 +18,18 @@ else()
     set(NICMGR_EXEC_LEVEL asInvoker)
 endif()
 
+# Self-signed code signing certificate (tools/make-cert.ps1). The public
+# res/nicmanager.cer is embedded so the app can install it; the private
+# signing/nicmanager.pfx stays out of git and signs the exe after linking.
+set(NICMGR_CERT "${CMAKE_CURRENT_SOURCE_DIR}/res/nicmanager.cer")
+if(EXISTS "${NICMGR_CERT}")
+    set(NICMGR_CERT_RC "IDR_SIGNING_CERT RCDATA \"${NICMGR_CERT}\"")
+else()
+    set(NICMGR_CERT_RC "")
+endif()
+set(NICMGR_SIGN_PFX "${CMAKE_CURRENT_SOURCE_DIR}/signing/nicmanager.pfx" CACHE FILEPATH
+    "PKCS#12 file used to sign the exe; password in env NICMGR_SIGN_PASSWORD")
+
 configure_file(res/app.manifest.in ${CMAKE_CURRENT_BINARY_DIR}/app.manifest @ONLY)
 configure_file(res/app.rc.in ${CMAKE_CURRENT_BINARY_DIR}/app.rc @ONLY)
 
@@ -32,6 +44,8 @@ add_executable(NicManager WIN32
     src/json.cpp
     src/ipaddr.cpp
     src/actions.cpp
+    src/cert.cpp
+    src/starttask.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/app.rc
 )
 target_include_directories(NicManager PRIVATE src res)
@@ -41,7 +55,24 @@ target_compile_definitions(NicManager PRIVATE
 
 # All system libraries that ship with Windows; no third-party dependencies.
 target_link_libraries(NicManager PRIVATE
-    iphlpapi ws2_32 setupapi cfgmgr32 comctl32 comdlg32 shell32 advapi32 crypt32 uxtheme dwmapi)
+    iphlpapi ws2_32 setupapi cfgmgr32 comctl32 comdlg32 shell32 advapi32 crypt32 uxtheme dwmapi ole32 uuid)
+
+set_property(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/app.rc APPEND PROPERTY OBJECT_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/app.ico")
+if(EXISTS "${NICMGR_CERT}")
+    target_compile_definitions(NicManager PRIVATE NICMGR_HAS_CERT=1)
+    set_property(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/app.rc APPEND PROPERTY OBJECT_DEPENDS "${NICMGR_CERT}")
+endif()
+
+if(EXISTS "${NICMGR_SIGN_PFX}")
+    find_program(NICMGR_OSSLSIGNCODE osslsigncode)
+    find_program(NICMGR_SIGNTOOL signtool)
+    add_custom_command(TARGET NicManager POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:NicManager> -DPFX=${NICMGR_SIGN_PFX}
+                "-DOSSLSIGNCODE=${NICMGR_OSSLSIGNCODE}" "-DSIGNTOOL=${NICMGR_SIGNTOOL}"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/sign.cmake
+        VERBATIM)
+endif()
 
 if(MSVC)
     target_compile_options(NicManager PRIVATE /W4 /permissive- /utf-8 /MP)

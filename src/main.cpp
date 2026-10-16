@@ -10,6 +10,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     if (actions::HandleAskPass()) return 0;  // started by ssh.exe as SSH_ASKPASS
 
     const bool demo = cmdLine && wcsstr(cmdLine, L"--demo") != nullptr;
+    const bool minimized = cmdLine && wcsstr(cmdLine, L"--minimized") != nullptr;  // autostart task
 
     // Single instance: a second start just brings the existing window up.
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\NicManager.SingleInstance");
@@ -27,7 +28,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     int code = 1;
     {
         MainWindow window;
-        if (window.Create(inst, demo)) {
+        if (window.Create(inst, demo, minimized)) {
             MSG msg;
             while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
                 TranslateMessage(&msg);

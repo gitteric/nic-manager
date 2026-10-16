@@ -4,6 +4,11 @@
 #define IDD_ACTION        102
 #define IDD_PRESETS       103
 #define IDD_HOST          104
+#define IDR_SIGNING_CERT  110
+#define IDI_APP           1
+#define IDD_STARTTASK     105
+#define IDC_AUTOSTART     1040
+#define IDC_SHORTCUT      1041
 
 #define IDC_PROMPT_LABEL  1001
 #define IDC_PROMPT_EDIT   1002

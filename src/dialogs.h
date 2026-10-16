@@ -18,6 +18,9 @@ using Validator = std::function<bool(const std::wstring& text, std::wstring& err
 std::optional<std::wstring> PromptText(HWND owner, const std::wstring& title, const std::wstring& label,
                                        const std::wstring& initial, Validator validate = {});
 
+// Options for the "start without UAC prompt" tasks; false on cancel.
+bool AskStartTask(HWND owner, bool& autostart, bool& shortcut);
+
 // Name and address of a host entry; an empty name becomes the address.
 bool EditHost(HWND owner, std::wstring& name, std::wstring& address);
 

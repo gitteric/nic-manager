@@ -10,6 +10,9 @@
 #include <cwctype>
 
 #include "actions.h"
+#include "cert.h"
+#include "resource.h"
+#include "starttask.h"
 #include "dialogs.h"
 #include "ipaddr.h"
 #include "strutil.h"
@@ -48,7 +51,7 @@ constexpr wchar_t kGlyphMinimize = 0xE921;
 constexpr wchar_t kGlyphError = 0xEA39;
 
 enum : UINT {
-    IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
+    IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_CERT, IDM_TASK_SETUP, IDM_TASK_REMOVE, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
     IDM_CYCLE_BASE = 200,
     IDM_APPLY_PRESET_BASE = 1000,
 };
@@ -110,46 +113,11 @@ UINT DpiForWindow(HWND hwnd) {
 
 // Draws the app icon pixel by pixel: accent rounded square with a small
 // white network topology. No .ico file needed.
-HICON CreateAppIcon(int size) {
-    BITMAPINFO bi{};
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = size;
-    bi.bmiHeader.biHeight = -size;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    void* bits = nullptr;
-    HBITMAP color = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!color) return nullptr;
-    auto* px = static_cast<DWORD*>(bits);
-    const double r = size * 0.22;
-    auto inRect = [](double x, double y, double l, double t, double rr, double b) {
-        return x >= l && x < rr && y >= t && y < b;
-    };
-    for (int y = 0; y < size; ++y) {
-        for (int x = 0; x < size; ++x) {
-            double fx = (x + 0.5) / size, fy = (y + 0.5) / size;
-            double cx = std::clamp(x + 0.5, r, size - r), cy = std::clamp(y + 0.5, r, size - r);
-            double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
-            DWORD v = 0;
-            if (dx * dx + dy * dy <= r * r) {
-                bool white = inRect(fx, fy, 0.36, 0.16, 0.64, 0.40) ||   // top node
-                             inRect(fx, fy, 0.14, 0.60, 0.40, 0.84) ||   // left node
-                             inRect(fx, fy, 0.60, 0.60, 0.86, 0.84) ||   // right node
-                             inRect(fx, fy, 0.46, 0.40, 0.54, 0.52) ||   // stem
-                             inRect(fx, fy, 0.23, 0.46, 0.77, 0.53) ||   // bus
-                             inRect(fx, fy, 0.23, 0.46, 0.31, 0.60) ||
-                             inRect(fx, fy, 0.69, 0.46, 0.77, 0.60);
-                COLORREF c = white ? RGB(255, 255, 255) : theme::Accent;
-                v = 0xFF000000u | (GetRValue(c) << 16) | (GetGValue(c) << 8) | GetBValue(c);
-            }
-            px[y * size + x] = v;
-        }
-    }
-    HBITMAP mask = CreateBitmap(size, size, 1, 1, nullptr);
-    ICONINFO ii{TRUE, 0, 0, mask, color};
-    HICON icon = CreateIconIndirect(&ii);
-    DeleteObject(mask);
-    DeleteObject(color);
+// The app icon (res/app.ico, rendered by tools/make-icon.py) at a given size.
+HICON LoadAppIcon(HINSTANCE inst, int size) {
+    HICON icon = nullptr;
+    if (FAILED(LoadIconWithScaleDown(inst, MAKEINTRESOURCEW(IDI_APP), size, size, &icon)))
+        icon = static_cast<HICON>(LoadImageW(inst, MAKEINTRESOURCEW(IDI_APP), IMAGE_ICON, size, size, 0));
     return icon;
 }
 
@@ -159,15 +127,15 @@ HICON CreateAppIcon(int size) {
 // creation
 // =========================================================================
 
-bool MainWindow::Create(HINSTANCE inst, bool demo) {
+bool MainWindow::Create(HINSTANCE inst, bool demo, bool minimized) {
     m_inst = inst;
     m_demo = demo;
     m_settings = settings::Load();
     m_elevated = netcmd::IsElevated();
     for (size_t i = 0; i < m_settings.hosts.size(); ++i) m_hostState.push_back({m_nextHostId++});
 
-    m_iconSmall = CreateAppIcon(GetSystemMetrics(SM_CXSMICON));
-    m_iconLarge = CreateAppIcon(GetSystemMetrics(SM_CXICON));
+    m_iconSmall = LoadAppIcon(inst, GetSystemMetrics(SM_CXSMICON));
+    m_iconLarge = LoadAppIcon(inst, GetSystemMetrics(SM_CXICON));
 
     WNDCLASSEXW wc{sizeof(wc)};
     wc.style = CS_DBLCLKS | CS_DROPSHADOW;
@@ -186,7 +154,7 @@ bool MainWindow::Create(HINSTANCE inst, bool demo) {
                              CW_USEDEFAULT, CW_USEDEFAULT,
                              200, 200, nullptr, nullptr, inst, this);
     if (!m_hwnd) return false;
-    ShowWindowNear();
+    ShowWindowNear(!minimized);
     return true;
 }
 
@@ -418,7 +386,7 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else EndEdit();
         }
         return 0;
-    case WM_CLOSE: ShowWindow(m_hwnd, SW_HIDE); return 0;
+    case WM_CLOSE: DestroyWindow(m_hwnd); return 0;  // X button, Alt+F4, taskbar "Close window"
     case WM_DESTROY: {
         NOTIFYICONDATAW nid{sizeof(nid)};
         nid.hWnd = m_hwnd;
@@ -680,7 +648,7 @@ void MainWindow::PlaceButtons() {
 
     // Fixed buttons: title close + bottom bar shortcuts.
     m_fixed.clear();
-    m_fixed.push_back({kGlyphClose, Cmd::Hide, L"Hide to tray", {M.width - M.title, 0, M.width, M.title}});
+    m_fixed.push_back({kGlyphClose, Cmd::Exit, L"Exit", {M.width - M.title, 0, M.width, M.title}});
     m_fixed.push_back({kGlyphMinimize, Cmd::Minimize, L"Minimize",
                        {M.width - 2 * M.title, 0, M.width - M.title, M.title}});
     const int by = client.bottom - M.bottom;
@@ -934,7 +902,7 @@ void MainWindow::PaintButton(HDC dc, const Button& b, RECT rc, bool hover, HFONT
                               ? theme::Red
                               : theme::Text)
                        : theme::TextDim;
-    if (m_busy && b.cmd != Cmd::Hide) c = theme::TextDisabled;
+    if (m_busy && IsBlockedWhileBusy(b.cmd)) c = theme::TextDisabled;
     DrawGlyph(dc, font, b.glyph, rc, c);
 }
 
@@ -1107,8 +1075,8 @@ void MainWindow::OnRButtonUp(POINT pt) {
 }
 
 bool MainWindow::IsBlockedWhileBusy(Cmd cmd) const {
-    return cmd != Cmd::ExpandAdapter && cmd != Cmd::ExpandHost && cmd != Cmd::Hide && cmd != Cmd::Minimize && cmd != Cmd::OpenWifi &&
-           cmd != Cmd::OpenNcpa;
+    return cmd != Cmd::ExpandAdapter && cmd != Cmd::ExpandHost && cmd != Cmd::Hide && cmd != Cmd::Exit &&
+           cmd != Cmd::Minimize && cmd != Cmd::OpenWifi && cmd != Cmd::OpenNcpa;
 }
 
 void MainWindow::Execute(const Row* rowp, Cmd cmd) {
@@ -1285,6 +1253,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
         break;
     }
     case Cmd::Hide: ShowWindow(m_hwnd, SW_HIDE); break;
+    case Cmd::Exit: DestroyWindow(m_hwnd); break;
     case Cmd::Minimize: ShowWindow(m_hwnd, m_settings.minimizeToTray ? SW_HIDE : SW_MINIMIZE); break;
     }
 }
@@ -1619,7 +1588,7 @@ void MainWindow::SetStatus(const std::wstring& text, COLORREF color, UINT ms) {
 // window placement + menus
 // =========================================================================
 
-void MainWindow::ShowWindowNear() {
+void MainWindow::ShowWindowNear(bool show) {
     POINT saved{m_settings.windowX, m_settings.windowY};
     bool useSaved = saved.x != INT_MIN && MonitorFromPoint(saved, MONITOR_DEFAULTTONULL) != nullptr;
     int x, y;
@@ -1634,7 +1603,41 @@ void MainWindow::ShowWindowNear() {
     }
     SetWindowPos(m_hwnd, nullptr, x, y, M.width, S(200), SWP_NOZORDER | SWP_NOACTIVATE);
     Relayout();
-    ShowRestored();
+    if (show) ShowRestored();
+    else if (!m_settings.minimizeToTray) ShowWindow(m_hwnd, SW_SHOWMINNOACTIVE);  // taskbar only
+}
+
+void MainWindow::SetUpStartTask() {
+    bool autostart = m_startTask == 2 || m_startTask <= 0, shortcut = m_startTask <= 0;
+    if (!dialogs::AskStartTask(m_hwnd, autostart, shortcut)) return;
+    std::wstring err = starttask::Install(autostart, shortcut);
+    m_startTask = -1;  // re-read on next menu open
+    if (!err.empty()) ShowToast(L"Setting up the start task failed", err, L"");
+    else SetStatus(autostart ? L"Starts without UAC prompt, also at logon" : L"Starts without UAC prompt",
+                   theme::Green, 3000);
+}
+
+void MainWindow::RemoveStartTask() {
+    if (MessageBoxW(m_hwnd, L"Remove the scheduled tasks and the desktop shortcut? Windows will ask for "
+                            L"administrator rights again on every start.",
+                    L"NIC Manager", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+    std::wstring err = starttask::Remove();
+    m_startTask = -1;
+    if (!err.empty()) ShowToast(L"Removing the start task failed", err, L"");
+    else SetStatus(L"Start task removed", theme::Green, 2500);
+}
+
+void MainWindow::ToggleCertificate(bool installed) {
+    std::wstring q = installed
+        ? L"Remove the NIC Manager signing certificate from \"Trusted Root\" and \"Trusted Publishers\"?"
+        : L"Add the NIC Manager signing certificate to the computer's \"Trusted Root\" and \"Trusted Publishers\" "
+          L"stores?\n\nWindows then shows \"NIC Manager\" as verified publisher of this app. The certificate can "
+          L"only sign code and is used for nothing else.\n\nThumbprint: " + cert::Thumbprint();
+    if (MessageBoxW(m_hwnd, q.c_str(), L"NIC Manager", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    std::wstring err = installed ? cert::Remove() : cert::Install();
+    if (!err.empty()) ShowToast(installed ? L"Removing the certificate failed" : L"Installing the certificate failed", err, L"");
+    else SetStatus(installed ? L"Certificate removed" : L"Certificate trusted", theme::Green, 2500);
 }
 
 void MainWindow::ShowRestored() {
@@ -1685,6 +1688,14 @@ void MainWindow::ShowTrayMenu() {
 
     AppendMenuW(menu, MF_STRING | (m_settings.alwaysOnTop ? MF_CHECKED : 0), IDM_TOPMOST, L"Always on top");
     AppendMenuW(menu, MF_STRING | (m_settings.minimizeToTray ? MF_CHECKED : 0), IDM_TO_TRAY, L"Minimize to tray");
+    if (m_startTask < 0) m_startTask = starttask::IsInstalled() ? (starttask::AutostartInstalled() ? 2 : 1) : 0;
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (m_startTask > 0 ? MF_CHECKED : 0), IDM_TASK_SETUP,
+                m_startTask > 0 ? L"Start without UAC prompt: change..." : L"Start without UAC prompt...");
+    AppendMenuW(menu, MF_STRING | (m_startTask > 0 ? 0 : MF_GRAYED), IDM_TASK_REMOVE, L"Remove start without UAC prompt");
+    const bool certInstalled = cert::HasEmbedded() && cert::IsInstalled();
+    if (cert::HasEmbedded())
+        AppendMenuW(menu, MF_STRING | (certInstalled ? MF_CHECKED : 0), IDM_CERT, L"Trust signing certificate");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_EXIT, L"Exit");
 
@@ -1711,6 +1722,12 @@ void MainWindow::ShowTrayMenu() {
         SetWindowPos(m_hwnd, m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         settings::SaveGeneral(m_settings);
+    } else if (id == IDM_TASK_SETUP) {
+        SetUpStartTask();
+    } else if (id == IDM_TASK_REMOVE) {
+        RemoveStartTask();
+    } else if (id == IDM_CERT) {
+        ToggleCertificate(certInstalled);
     } else if (id == IDM_TO_TRAY) {
         m_settings.minimizeToTray = !m_settings.minimizeToTray;
         settings::SaveGeneral(m_settings);
