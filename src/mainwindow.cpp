@@ -519,19 +519,19 @@ void MainWindow::BuildLayout() {
         {
             Row& r = Push(RowKind::Host, M.host);
             r.host = i;
-            r.text = host.address;
+            r.text = host.name.empty() ? host.address : host.name;
+            if (r.text != host.address) r.sub = host.address;
             r.state = st.state == ping::State::Up ? theme::Green : st.state == ping::State::Down ? theme::Red
                                                                                                  : theme::Grey;
             r.tip = st.state == ping::State::Up     ? L"Reachable, " + std::to_wstring(st.rtt) + L" ms"
                     : st.state == ping::State::Down ? std::wstring(L"Not reachable")
                                                     : std::wstring(L"Waiting for first reply");
+            if (!r.sub.empty()) r.tip = host.address + L": " + r.tip;
             r.expanded = expanded;
             r.chevron = !host.actions.empty();
             r.rowCmd = host.actions.empty() ? Cmd::None : Cmd::ExpandHost;
             r.dblCmd = Cmd::EditHost;
             r.hoverButtons = true;
-            r.editKind = EditKind::Host;
-            r.editSlot = m_editTarget.kind == EditKind::Host && m_editTarget.host == i;
             r.buttons = {{kGlyphAdd, Cmd::AddAction, L"Add action"},
                          {kGlyphEdit, Cmd::EditHost, L"Edit host"},
                          {kGlyphDelete, Cmd::DelHost, L"Remove host"}};
@@ -868,6 +868,13 @@ void MainWindow::PaintRow(HDC dc, const Row& r, int ri, int dy) {
         } else if (!r.editSlot) {
             RECT t{x, body.top, textRight, body.bottom};
             DrawStr(dc, m_font, r.text, t, theme::Text);
+            if (!r.sub.empty()) {  // the address next to a custom name
+                SIZE sz{};
+                SelectObject(dc, m_font);
+                GetTextExtentPoint32W(dc, r.text.c_str(), (int)r.text.size(), &sz);
+                RECT a{x + sz.cx + S(8), body.top, textRight, body.bottom};
+                if (a.left < a.right) DrawStr(dc, m_fontSmall, r.sub, a, theme::TextDim);
+            }
         }
         if (r.chevron) {
             RECT c{r.textRightFull + S(4), body.top, r.textRightFull + S(4) + M.chevron + S(2), body.bottom};
@@ -1197,11 +1204,26 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
     case Cmd::AddDns: if (a) BeginEdit(EditKind::NewDns, row.adapter, -1, L""); break;
 
     case Cmd::AddHost: BeginEdit(EditKind::NewHost, -1, -1, L""); break;
-    case Cmd::EditHost: if (host) BeginEdit(EditKind::Host, row.host, -1, host->address); break;
+    case Cmd::EditHost:
+        if (host) {
+            std::wstring name = host->name, address = host->address;
+            if (dialogs::EditHost(m_hwnd, name, address)) {
+                HostEntry& h = m_settings.hosts[row.host];
+                h.name = name;
+                if (h.address != address) {
+                    h.address = address;
+                    m_hostState[row.host] = {m_nextHostId++};  // new id restarts the ping worker
+                }
+                settings::SaveHosts(m_settings.hosts);
+                SyncPinger();
+                Relayout();
+            }
+        }
+        break;
     case Cmd::DelHost: {
         if (!host) break;
         if (!host->actions.empty() &&
-            MessageBoxW(m_hwnd, (L"Remove " + host->address + L" and its actions?").c_str(), L"NIC Manager",
+            MessageBoxW(m_hwnd, (L"Remove " + host->name + L" and its actions?").c_str(), L"NIC Manager",
                         MB_YESNO | MB_ICONQUESTION) != IDYES)
             break;
         m_settings.hosts.erase(m_settings.hosts.begin() + row.host);
@@ -1216,7 +1238,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
     case Cmd::AddAction: {
         if (!host) break;
         HostAction act;
-        if (dialogs::EditAction(m_hwnd, act, host->address, true)) {
+        if (EditActionDialog(act, host->address, true)) {
             m_settings.hosts[row.host].actions.push_back(act);
             m_expandedHost = row.host;
             settings::SaveHosts(m_settings.hosts);
@@ -1225,12 +1247,16 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
         break;
     }
     case Cmd::RunAction:
-        if (host && idx >= 0 && idx < (int)host->actions.size()) actions::Run(m_hwnd, host->actions[idx]);
+        if (host && idx >= 0 && idx < (int)host->actions.size()) {
+            const HostAction& act = host->actions[idx];
+            std::wstring err = actions::Run(*host, act, m_settings.tightVncPath);
+            if (!err.empty()) ShowToast(std::wstring(actions::TypeName(act)) + L" could not start", err, L"");
+        }
         break;
     case Cmd::EditAction:
         if (host && idx >= 0 && idx < (int)host->actions.size()) {
             HostAction act = host->actions[idx];
-            if (dialogs::EditAction(m_hwnd, act, host->address, false)) {
+            if (EditActionDialog(act, host->address, false)) {
                 m_settings.hosts[row.host].actions[idx] = act;
                 settings::SaveHosts(m_settings.hosts);
                 Relayout();
@@ -1352,7 +1378,7 @@ void MainWindow::CommitEdit() {
     if (t.kind == EditKind::Host || t.kind == EditKind::NewHost) {
         if (!ip::IsValidHost(text)) return invalid(L"Enter an IPv4 address or host name");
         if (t.kind == EditKind::NewHost) {
-            m_settings.hosts.push_back({text, {}});
+            m_settings.hosts.push_back({text, text, {}});
             m_hostState.push_back({m_nextHostId++});
         } else if (t.host >= 0 && t.host < (int)m_settings.hosts.size() && m_settings.hosts[t.host].address != text) {
             m_settings.hosts[t.host].address = text;
@@ -1517,6 +1543,16 @@ void MainWindow::SyncPinger() {
     std::vector<std::pair<uint32_t, std::wstring>> list;
     for (size_t i = 0; i < m_settings.hosts.size(); ++i) list.emplace_back(m_hostState[i].id, m_settings.hosts[i].address);
     m_pinger.Sync(list);
+}
+
+bool MainWindow::EditActionDialog(HostAction& act, const std::wstring& hostAddress, bool isNew) {
+    std::wstring vnc = m_settings.tightVncPath;
+    if (!dialogs::EditAction(m_hwnd, act, hostAddress, isNew, vnc)) return false;
+    if (vnc != m_settings.tightVncPath) {
+        m_settings.tightVncPath = vnc;
+        settings::SaveTightVncPath(vnc);
+    }
+    return true;
 }
 
 void MainWindow::ShowToast(const std::wstring& title, const std::wstring& text, const std::wstring& details) {

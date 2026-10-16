@@ -3,9 +3,12 @@
 #include <windows.h>
 #include <commctrl.h>
 
+#include "actions.h"
 #include "mainwindow.h"
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
+    if (actions::HandleAskPass()) return 0;  // started by ssh.exe as SSH_ASKPASS
+
     const bool demo = cmdLine && wcsstr(cmdLine, L"--demo") != nullptr;
 
     // Single instance: a second start just brings the existing window up.

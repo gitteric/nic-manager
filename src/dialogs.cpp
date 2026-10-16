@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "actions.h"
 #include "ipaddr.h"
 #include "resource.h"
 #include "settings.h"
@@ -105,49 +106,117 @@ INT_PTR CALLBACK PromptProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     return DarkColors(msg, wp);
 }
 
+// ---- host entry ---------------------------------------------------------
+
+struct HostData {
+    std::wstring* name;
+    std::wstring* address;
+};
+
+INT_PTR CALLBACK HostProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* d = reinterpret_cast<HostData*>(GetWindowLongPtrW(dlg, DWLP_USER));
+    switch (msg) {
+    case WM_INITDIALOG:
+        d = reinterpret_cast<HostData*>(lp);
+        SetWindowLongPtrW(dlg, DWLP_USER, lp);
+        SetDlgItemTextW(dlg, IDC_HOST_NAME, d->name->c_str());
+        SetDlgItemTextW(dlg, IDC_HOST, d->address->c_str());
+        InitDark(dlg);
+        SetFocus(GetDlgItem(dlg, IDC_HOST_NAME));
+        SendDlgItemMessageW(dlg, IDC_HOST_NAME, EM_SETSEL, 0, -1);
+        return FALSE;
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDOK) {
+            std::wstring address = ItemText(dlg, IDC_HOST), name = ItemText(dlg, IDC_HOST_NAME);
+            if (!ip::IsValidHost(address)) {
+                Warn(dlg, IDC_HOST, L"Enter a valid IPv4 address or host name.");
+                return TRUE;
+            }
+            *d->name = name.empty() ? address : name;
+            *d->address = address;
+            EndDialog(dlg, IDOK);
+        } else if (LOWORD(wp) == IDCANCEL) {
+            EndDialog(dlg, IDCANCEL);
+        }
+        return TRUE;
+    }
+    return DarkColors(msg, wp);
+}
+
 // ---- host action --------------------------------------------------------
 
 struct ActionData {
     HostAction* action;
-    std::wstring defaultHost;
+    std::wstring hostAddress;
     bool isNew;
+    std::wstring* vncPath;
 };
+
+enum ActionType { kRdp, kSsh, kVnc, kBrowser };
 
 int SelectedType(HWND dlg) { return (int)SendDlgItemMessageW(dlg, IDC_TYPE, CB_GETCURSEL, 0, 0); }
 
-// The "mode" combo is the RDP display mode or the browser protocol.
-void FillModes(HWND dlg, int type) {
-    SendDlgItemMessageW(dlg, IDC_MODE, CB_RESETCONTENT, 0, 0);
-    if (type == 3) {
-        for (const wchar_t* t : {L"http", L"https"}) SendDlgItemMessageW(dlg, IDC_MODE, CB_ADDSTRING, 0, (LPARAM)t);
-        SetDlgItemTextW(dlg, IDC_LBL_MODE, L"Protocol");
-    } else {
-        for (const wchar_t* t : {L"Full screen", L"Window 1024 x 768"})
-            SendDlgItemMessageW(dlg, IDC_MODE, CB_ADDSTRING, 0, (LPARAM)t);
-        SetDlgItemTextW(dlg, IDC_LBL_MODE, L"Display");
-    }
-    SendDlgItemMessageW(dlg, IDC_MODE, CB_SETCURSEL, 0, 0);
+void Place(HWND dlg, int id, int x, int y, int w, int h, bool show) {
+    HWND c = GetDlgItem(dlg, id);
+    RECT r{x, y, x + w, y + h};
+    MapDialogRect(dlg, &r);
+    MoveWindow(c, r.left, r.top, r.right - r.left, r.bottom - r.top, FALSE);
+    ShowWindow(c, show ? SW_SHOW : SW_HIDE);
 }
 
+// Shows the fields of the selected type and stacks them without gaps
+// (positions in dialog units).
 void UpdateActionFields(HWND dlg, bool resetPort) {
-    int type = SelectedType(dlg);  // 0 RDP, 1 PuTTY, 2 VNC, 3 Browser
-    bool port = type != 0, user = type == 0 || type == 1, pass = type != 3, mode = type == 0 || type == 3;
-    for (int id : {IDC_LBL_PORT, IDC_PORT}) ShowWindow(GetDlgItem(dlg, id), port ? SW_SHOW : SW_HIDE);
-    for (int id : {IDC_LBL_USER, IDC_USER}) ShowWindow(GetDlgItem(dlg, id), user ? SW_SHOW : SW_HIDE);
-    for (int id : {IDC_LBL_PASS, IDC_PASS}) ShowWindow(GetDlgItem(dlg, id), pass ? SW_SHOW : SW_HIDE);
-    for (int id : {IDC_LBL_MODE, IDC_MODE}) ShowWindow(GetDlgItem(dlg, id), mode ? SW_SHOW : SW_HIDE);
-    if (resetPort) {
-        FillModes(dlg, type);
-        if (port) SetDlgItemInt(dlg, IDC_PORT, type == 1 ? 22 : type == 2 ? 5900 : 80, FALSE);
-    }
+    const int type = SelectedType(dlg);
+    const bool browser = type == kBrowser, port = type == kSsh || type == kVnc, user = type == kRdp || type == kSsh;
+    const bool pass = !browser, mode = type == kRdp, vnc = type == kVnc;
 
-    // Without a port field the user field takes the full row.
-    RECT label{port ? 53 : 7, 63, 179, 72}, edit{port ? 53 : 7, 73, 179, 86};
-    MapDialogRect(dlg, &label);
-    MapDialogRect(dlg, &edit);
-    MoveWindow(GetDlgItem(dlg, IDC_LBL_USER), label.left, label.top, label.right - label.left,
-               label.bottom - label.top, TRUE);
-    MoveWindow(GetDlgItem(dlg, IDC_USER), edit.left, edit.top, edit.right - edit.left, edit.bottom - edit.top, TRUE);
+    // Other types connect to the host entry's address; the browser has its
+    // own URL, preset to that address.
+    SetDlgItemTextW(dlg, IDC_LBL_HOST, browser ? L"URL (or host:port)" : L"Host (from the host entry)");
+    SendDlgItemMessageW(dlg, IDC_HOST, EM_SETREADONLY, !browser, 0);
+    auto* d = reinterpret_cast<ActionData*>(GetWindowLongPtrW(dlg, DWLP_USER));
+    if (!browser && d) SetDlgItemTextW(dlg, IDC_HOST, d->hostAddress.c_str());
+    if (resetPort && port) SetDlgItemInt(dlg, IDC_PORT, type == kSsh ? 22 : 5900, FALSE);
+
+    int y = 35;
+    auto row = [&](bool visible) {
+        int top = y;
+        if (visible) y += 28;
+        return top;
+    };
+    int r = row(true);
+    Place(dlg, IDC_LBL_HOST, 7, r, 172, 9, true);
+    Place(dlg, IDC_HOST, 7, r + 10, 172, 13, true);
+    r = row(port || user);
+    int ux = port ? 53 : 7;
+    Place(dlg, IDC_LBL_PORT, 7, r, 40, 9, port);
+    Place(dlg, IDC_PORT, 7, r + 10, 40, 13, port);
+    Place(dlg, IDC_LBL_USER, ux, r, 179 - ux, 9, user);
+    Place(dlg, IDC_USER, ux, r + 10, 179 - ux, 13, user);
+    r = row(pass);
+    Place(dlg, IDC_LBL_PASS, 7, r, 172, 9, pass);
+    Place(dlg, IDC_PASS, 7, r + 10, 172, 13, pass);
+    r = row(mode || vnc);
+    Place(dlg, IDC_LBL_MODE, 7, r, 172, 9, mode);
+    Place(dlg, IDC_MODE, 7, r + 10, 172, 40, mode);
+    Place(dlg, IDC_LBL_VNC, 7, r, 172, 9, vnc);
+    Place(dlg, IDC_VNCPATH, 7, r + 10, 150, 13, vnc);
+    Place(dlg, IDC_BROWSE, 160, r + 10, 19, 13, vnc);
+    y += 2;
+    Place(dlg, IDOK, 75, y, 50, 14, true);
+    Place(dlg, IDCANCEL, 129, y, 50, 14, true);
+
+    // Fit the dialog to the stacked fields.
+    RECT client{0, 0, 186, y + 21};
+    MapDialogRect(dlg, &client);
+    RECT wr, cr;
+    GetWindowRect(dlg, &wr);
+    GetClientRect(dlg, &cr);
+    int frameH = (wr.bottom - wr.top) - cr.bottom;
+    SetWindowPos(dlg, nullptr, 0, 0, wr.right - wr.left, client.bottom + frameH,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    InvalidateRect(dlg, nullptr, TRUE);
 }
 
 INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
@@ -156,32 +225,29 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_INITDIALOG: {
         d = reinterpret_cast<ActionData*>(lp);
         SetWindowLongPtrW(dlg, DWLP_USER, lp);
-        for (const wchar_t* t : {L"Remote Desktop (RDP)", L"PuTTY (SSH)", L"TightVNC", L"Browser"})
+        for (const wchar_t* t : {L"Remote Desktop (RDP)", L"SSH (Windows OpenSSH)", L"TightVNC", L"Browser"})
             SendDlgItemMessageW(dlg, IDC_TYPE, CB_ADDSTRING, 0, (LPARAM)t);
+        for (const wchar_t* t : {L"Full screen", L"Window 1024 x 768"})
+            SendDlgItemMessageW(dlg, IDC_MODE, CB_ADDSTRING, 0, (LPARAM)t);
         const ActionSettings& s = d->action->settings;
         SendDlgItemMessageW(dlg, IDC_TYPE, CB_SETCURSEL, s.index(), 0);
-        FillModes(dlg, (int)s.index());
-        std::wstring host = d->defaultHost;
+        SendDlgItemMessageW(dlg, IDC_MODE, CB_SETCURSEL, 0, 0);
+        SetDlgItemTextW(dlg, IDC_HOST, d->hostAddress.c_str());
         if (auto* r = std::get_if<RdpSettings>(&s)) {
-            if (!r->host.empty()) host = r->host;
             SetDlgItemTextW(dlg, IDC_USER, r->user.c_str());
             SetDlgItemTextW(dlg, IDC_PASS, r->password.c_str());
             SendDlgItemMessageW(dlg, IDC_MODE, CB_SETCURSEL, r->fullscreen ? 0 : 1, 0);
-        } else if (auto* p = std::get_if<PuttySettings>(&s)) {
-            if (!p->host.empty()) host = p->host;
+        } else if (auto* p = std::get_if<SshSettings>(&s)) {
             SetDlgItemInt(dlg, IDC_PORT, p->port, FALSE);
             SetDlgItemTextW(dlg, IDC_USER, p->user.c_str());
             SetDlgItemTextW(dlg, IDC_PASS, p->password.c_str());
         } else if (auto* v = std::get_if<VncSettings>(&s)) {
-            if (!v->host.empty()) host = v->host;
             SetDlgItemInt(dlg, IDC_PORT, v->port, FALSE);
             SetDlgItemTextW(dlg, IDC_PASS, v->password.c_str());
         } else if (auto* b = std::get_if<BrowserSettings>(&s)) {
-            if (!b->host.empty()) host = b->host;
-            SetDlgItemInt(dlg, IDC_PORT, b->port, FALSE);
-            SendDlgItemMessageW(dlg, IDC_MODE, CB_SETCURSEL, b->https ? 1 : 0, 0);
+            if (!b->url.empty()) SetDlgItemTextW(dlg, IDC_HOST, b->url.c_str());
         }
-        SetDlgItemTextW(dlg, IDC_HOST, host.c_str());
+        SetDlgItemTextW(dlg, IDC_VNCPATH, (d->vncPath->empty() ? actions::FindTightVnc() : *d->vncPath).c_str());
         SetWindowTextW(dlg, d->isNew ? L"Add host action" : L"Edit host action");
         UpdateActionFields(dlg, false);
         InitDark(dlg);
@@ -189,37 +255,57 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_COMMAND:
         if (LOWORD(wp) == IDC_TYPE && HIWORD(wp) == CBN_SELCHANGE) {
+            if (SelectedType(dlg) == kBrowser) SetDlgItemTextW(dlg, IDC_HOST, d->hostAddress.c_str());
             UpdateActionFields(dlg, true);
-        } else if (LOWORD(wp) == IDC_MODE && HIWORD(wp) == CBN_SELCHANGE && SelectedType(dlg) == 3) {
-            // Follow the protocol's default port unless a custom one was entered.
-            bool https = SendDlgItemMessageW(dlg, IDC_MODE, CB_GETCURSEL, 0, 0) == 1;
-            UINT port = GetDlgItemInt(dlg, IDC_PORT, nullptr, FALSE);
-            if (port == 80 || port == 443 || port == 0) SetDlgItemInt(dlg, IDC_PORT, https ? 443 : 80, FALSE);
+        } else if (LOWORD(wp) == IDC_BROWSE) {
+            wchar_t buf[MAX_PATH] = {};
+            std::wstring cur = ItemText(dlg, IDC_VNCPATH);
+            wcsncpy(buf, cur.c_str(), MAX_PATH - 1);
+            OPENFILENAMEW ofn{sizeof(ofn)};
+            ofn.hwndOwner = dlg;
+            ofn.lpstrFilter = L"TightVNC viewer (tvnviewer.exe)\0tvnviewer.exe\0Programs (*.exe)\0*.exe\0";
+            ofn.lpstrFile = buf;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrTitle = L"Select the TightVNC viewer";
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+            if (GetOpenFileNameW(&ofn)) SetDlgItemTextW(dlg, IDC_VNCPATH, buf);
         } else if (LOWORD(wp) == IDOK) {
-            std::wstring host = ItemText(dlg, IDC_HOST);
-            if (!ip::IsValidHost(host)) {
-                Warn(dlg, IDC_HOST, L"Enter a valid IPv4 address or host name.");
+            const int type = SelectedType(dlg);
+            std::wstring url = ItemText(dlg, IDC_HOST);
+            if (type == kBrowser && !actions::IsValidBrowserTarget(url)) {
+                Warn(dlg, IDC_HOST, L"Enter an http(s):// URL or host[:port], e.g. 10.0.0.5:8080/admin.");
                 return TRUE;
             }
-            int type = SelectedType(dlg);
             BOOL okPort = TRUE;
             int port = (int)GetDlgItemInt(dlg, IDC_PORT, &okPort, FALSE);
-            if (type != 0 && (!okPort || port < 1 || port > 65535)) {
+            if ((type == kSsh || type == kVnc) && (!okPort || port < 1 || port > 65535)) {
                 Warn(dlg, IDC_PORT, L"Port must be between 1 and 65535.");
                 return TRUE;
             }
             std::wstring user = ItemText(dlg, IDC_USER);
+            if (type == kSsh && user.find_first_of(L" \t\"%&|<>^") != std::wstring::npos) {
+                Warn(dlg, IDC_USER, L"The SSH user name must not contain spaces or any of \" % & | < > ^");
+                return TRUE;
+            }
             std::wstring pass = GetWindowTextStr(GetDlgItem(dlg, IDC_PASS));
-            if (type == 0) {
+            if (type == kVnc) {
+                std::wstring path = ItemText(dlg, IDC_VNCPATH);
+                DWORD attr = GetFileAttributesW(path.c_str());
+                if (!path.empty() && (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY))) {
+                    Warn(dlg, IDC_VNCPATH, L"The TightVNC viewer was not found at this path.");
+                    return TRUE;
+                }
+                *d->vncPath = path;
+            }
+            if (type == kRdp) {
                 bool full = SendDlgItemMessageW(dlg, IDC_MODE, CB_GETCURSEL, 0, 0) == 0;
-                d->action->settings = RdpSettings{host, user, pass, full};
-            } else if (type == 1) {
-                d->action->settings = PuttySettings{host, port, user, pass};
-            } else if (type == 2) {
-                d->action->settings = VncSettings{host, port, pass};
+                d->action->settings = RdpSettings{user, pass, full};
+            } else if (type == kSsh) {
+                d->action->settings = SshSettings{port, user, pass};
+            } else if (type == kVnc) {
+                d->action->settings = VncSettings{port, pass};
             } else {
-                bool https = SendDlgItemMessageW(dlg, IDC_MODE, CB_GETCURSEL, 0, 0) == 1;
-                d->action->settings = BrowserSettings{host, port, https};
+                d->action->settings = BrowserSettings{url};
             }
             EndDialog(dlg, IDOK);
         } else if (LOWORD(wp) == IDCANCEL) {
@@ -367,9 +453,19 @@ std::optional<std::wstring> PromptText(HWND owner, const std::wstring& title, co
     return d.text;
 }
 
-bool EditAction(HWND owner, HostAction& action, const std::wstring& defaultHost, bool isNew) {
+bool EditHost(HWND owner, std::wstring& name, std::wstring& address) {
+    std::wstring n = name, a = address;
+    HostData d{&n, &a};
+    if (DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_HOST), owner, HostProc, (LPARAM)&d) != IDOK)
+        return false;
+    name = n;
+    address = a;
+    return true;
+}
+
+bool EditAction(HWND owner, HostAction& action, const std::wstring& hostAddress, bool isNew, std::wstring& vncPath) {
     HostAction copy = action;
-    ActionData d{&copy, defaultHost, isNew};
+    ActionData d{&copy, hostAddress, isNew, &vncPath};
     if (DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_ACTION), owner, ActionProc,
                         (LPARAM)&d) != IDOK)
         return false;

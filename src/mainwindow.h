@@ -139,6 +139,7 @@ private:
     void SyncPinger();
     void SetStatus(const std::wstring& text, COLORREF color, UINT ms = 4000);
     // Error strip above the bottom bar; hides itself after a few seconds.
+    bool EditActionDialog(HostAction& act, const std::wstring& hostAddress, bool isNew);
     void ShowToast(const std::wstring& title, const std::wstring& text, const std::wstring& details);
     void HideToast();
     void PaintToast(HDC dc, int bottom, int right);

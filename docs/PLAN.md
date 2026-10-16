@@ -175,8 +175,9 @@ Behaviour I chose where your list left it open:
 | `PingCycleMs` | DWORD | 1–10000, default 5000 |
 | `WindowX`, `WindowY` | DWORD | last position |
 | `AlwaysOnTop` | DWORD | 0/1 |
+| `TightVncPath` | SZ | tvnviewer.exe path, edited in the VNC action dialog |
 | `MinimizeToTray` | DWORD | 1 (default): tray only, minimize hides; 0: taskbar button too |
-| `Hosts` | SZ | JSON: hosts and their actions; passwords DPAPI-encrypted (`"dpapi:…"`) |
+| `Hosts` | SZ | JSON: hosts (name, address) and their actions, which connect to the host address; passwords DPAPI-encrypted (`"dpapi:…"`) |
 | `Presets` | SZ | JSON, the same format as the export file |
 
 Preset export file:
@@ -211,7 +212,7 @@ Import validates every address and replaces presets that have the same name.
 | `src/settings.*` | registry, DPAPI, JSON mapping, file I/O |
 | `src/dialogs.*` | action editor, preset manager, text prompt |
 | `src/ipaddr.*`, `src/json.*` | validation and JSON |
-| `src/actions.*` | RDP / PuTTY / VNC / Browser hulls |
+| `src/actions.*` | RDP (temp .rdp + mstsc), SSH (Windows OpenSSH + askpass), TightVNC, Browser |
 | `src/theme.h`, `src/model.h` | colours, data types |
 | `res/` | dialog templates, manifest (elevation, DPI, common controls v6) |
 

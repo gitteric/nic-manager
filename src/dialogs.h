@@ -18,9 +18,13 @@ using Validator = std::function<bool(const std::wstring& text, std::wstring& err
 std::optional<std::wstring> PromptText(HWND owner, const std::wstring& title, const std::wstring& label,
                                        const std::wstring& initial, Validator validate = {});
 
-// Edits `action` in place; returns false on cancel. `defaultHost` pre-fills
-// the host for a new action.
-bool EditAction(HWND owner, HostAction& action, const std::wstring& defaultHost, bool isNew);
+// Name and address of a host entry; an empty name becomes the address.
+bool EditHost(HWND owner, std::wstring& name, std::wstring& address);
+
+// Edits `action` in place; returns false on cancel. Actions connect to
+// `hostAddress` (shown read-only; the browser URL is preset to it).
+// `vncPath` is the global TightVNC viewer path, shown with VNC actions.
+bool EditAction(HWND owner, HostAction& action, const std::wstring& hostAddress, bool isNew, std::wstring& vncPath);
 
 // List with delete / export / import. Returns true if `presets` changed.
 bool ManagePresets(HWND owner, std::vector<Preset>& presets);

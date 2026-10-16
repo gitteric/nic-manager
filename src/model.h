@@ -56,39 +56,37 @@ struct Preset {
 
 // ---- host actions -------------------------------------------------------
 
+// Actions connect to their host entry's address; only the browser has its
+// own target, a URL or host[:port] preset to that address.
 struct RdpSettings {
-    std::wstring host;
     std::wstring user;
     std::wstring password;
     bool fullscreen = true;  // false = 1024x768 window
 };
 
-struct PuttySettings {
-    std::wstring host;
+struct SshSettings {
     int port = 22;
     std::wstring user;
     std::wstring password;
 };
 
 struct VncSettings {
-    std::wstring host;
     int port = 5900;
     std::wstring password;
 };
 
 struct BrowserSettings {
-    std::wstring host;
-    int port = 80;
-    bool https = false;
+    std::wstring url;  // http(s)://... or host[:port][/path]; http:// is assumed
 };
 
-using ActionSettings = std::variant<RdpSettings, PuttySettings, VncSettings, BrowserSettings>;
+using ActionSettings = std::variant<RdpSettings, SshSettings, VncSettings, BrowserSettings>;
 
 struct HostAction {
     ActionSettings settings;
 };
 
 struct HostEntry {
+    std::wstring name;     // display name, defaults to the address
     std::wstring address;  // IPv4 or host name
     std::vector<HostAction> actions;
 };

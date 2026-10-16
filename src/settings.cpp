@@ -155,32 +155,28 @@ json::Value HostsToJson(const std::vector<HostEntry>& hosts) {
     json::Value arr = json::Value::Array();
     for (const auto& h : hosts) {
         json::Value o = json::Value::Object();
+        o.Set("name", Str(h.name));
         o.Set("address", Str(h.address));
         json::Value acts = json::Value::Array();
         for (const auto& a : h.actions) {
             json::Value j = json::Value::Object();
             if (auto* r = std::get_if<RdpSettings>(&a.settings)) {
                 j.Set("type", "rdp");
-                j.Set("host", Str(r->host));
                 j.Set("user", Str(r->user));
                 j.Set("password", Protect(r->password));
                 j.Set("fullscreen", r->fullscreen);
-            } else if (auto* p = std::get_if<PuttySettings>(&a.settings)) {
-                j.Set("type", "putty");
-                j.Set("host", Str(p->host));
+            } else if (auto* p = std::get_if<SshSettings>(&a.settings)) {
+                j.Set("type", "ssh");
                 j.Set("port", p->port);
                 j.Set("user", Str(p->user));
                 j.Set("password", Protect(p->password));
             } else if (auto* v = std::get_if<VncSettings>(&a.settings)) {
                 j.Set("type", "vnc");
-                j.Set("host", Str(v->host));
                 j.Set("port", v->port);
                 j.Set("password", Protect(v->password));
             } else if (auto* b = std::get_if<BrowserSettings>(&a.settings)) {
                 j.Set("type", "browser");
-                j.Set("host", Str(b->host));
-                j.Set("port", b->port);
-                j.Set("https", b->https);
+                j.Set("url", Str(b->url));
             }
             acts.Push(std::move(j));
         }
@@ -196,34 +192,38 @@ std::vector<HostEntry> HostsFromJson(const json::Value& arr) {
         HostEntry h;
         h.address = WStr(o["address"]);
         if (!ip::IsValidHost(h.address)) continue;
+        h.name = Trim(WStr(o["name"]));
+        if (h.name.empty()) h.name = h.address;
         for (const auto& j : o["actions"].Items()) {
             std::string type = j["type"].AsString();
             HostAction a;
             if (type == "rdp") {
                 RdpSettings r;
-                r.host = WStr(j["host"]);
                 r.user = WStr(j["user"]);
                 r.password = Unprotect(j["password"].AsString());
                 r.fullscreen = j["fullscreen"].AsBool(true);
                 a.settings = r;
-            } else if (type == "putty") {
-                PuttySettings p;
-                p.host = WStr(j["host"]);
+            } else if (type == "ssh" || type == "putty") {  // "putty": before the rename
+                SshSettings p;
                 p.port = j["port"].AsInt(22);
                 p.user = WStr(j["user"]);
                 p.password = Unprotect(j["password"].AsString());
                 a.settings = p;
             } else if (type == "vnc") {
                 VncSettings v;
-                v.host = WStr(j["host"]);
                 v.port = j["port"].AsInt(5900);
                 v.password = Unprotect(j["password"].AsString());
                 a.settings = v;
             } else if (type == "browser") {
                 BrowserSettings b;
-                b.host = WStr(j["host"]);
-                b.https = j["https"].AsBool(false);
-                b.port = j["port"].AsInt(b.https ? 443 : 80);
+                b.url = WStr(j["url"]);
+                if (b.url.empty()) {  // older format: host, port, https
+                    bool https = j["https"].AsBool(false);
+                    int port = j["port"].AsInt(https ? 443 : 80);
+                    std::wstring host = WStr(j["host"]).empty() ? h.address : WStr(j["host"]);
+                    b.url = (https ? L"https://" : L"http://") + host +
+                            (port == (https ? 443 : 80) ? L"" : L":" + std::to_wstring(port));
+                }
                 a.settings = b;
             } else {
                 continue;
@@ -236,6 +236,11 @@ std::vector<HostEntry> HostsFromJson(const json::Value& arr) {
 }
 
 }  // namespace
+
+std::string ProtectString(const std::wstring& plain) { return Protect(plain); }
+std::wstring UnprotectString(const std::string& stored) { return Unprotect(stored); }
+
+void SaveTightVncPath(const std::wstring& path) { WriteString(L"TightVncPath", path); }
 
 std::string PresetsToJson(const std::vector<Preset>& presets) {
     json::Value root = json::Value::Object();
@@ -291,6 +296,7 @@ AppSettings Load() {
     s.windowY = (int)ReadDword(L"WindowY", (DWORD)INT_MIN);
     s.alwaysOnTop = ReadDword(L"AlwaysOnTop", 0) != 0;
     s.minimizeToTray = ReadDword(L"MinimizeToTray", 1) != 0;
+    s.tightVncPath = ReadString(L"TightVncPath");
 
     json::Value hosts;
     if (json::Parse(WideToUtf8(ReadString(L"Hosts")), hosts) && hosts.IsArray()) s.hosts = HostsFromJson(hosts);
