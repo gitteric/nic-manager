@@ -37,7 +37,8 @@ ProcessResult RunProcess(const std::wstring& exe, const std::wstring& args, DWOR
 
 struct JobResult {
     bool ok = true;
-    std::wstring log;  // commands run and their output, for error display
+    std::wstring error;  // short, user-facing reason of the first failure
+    std::wstring log;    // commands run and their output, for details
 };
 
 JobResult SetAdapterEnabled(const std::wstring& name, bool enable, const Deadline& dl);
@@ -48,6 +49,7 @@ JobResult FlushDns(const Deadline& dl);
 JobResult RenewDhcp(const std::wstring& name /* empty = all adapters */, const Deadline& dl);
 
 void OpenNetworkConnections();  // classic "Network Connections" (ncpa.cpl)
+void OpenWifiPicker();          // Windows' list of available Wi-Fi networks
 bool IsElevated();
 
 }  // namespace netcmd

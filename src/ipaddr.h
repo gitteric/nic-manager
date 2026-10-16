@@ -12,6 +12,9 @@ namespace ip {
 bool ParseIpv4(const std::wstring& s, uint32_t* out = nullptr);
 std::wstring FormatIpv4(uint32_t hostOrder);
 
+// 169.254.0.0/16 (APIPA). Windows adds these on its own; never part of a config.
+bool IsLinkLocal(const std::wstring& s);
+
 // RFC 1123 host name (letters, digits, hyphens; labels 1..63; total <= 253).
 bool IsValidHostname(const std::wstring& s);
 // IPv4 address or host name, as accepted for the ping list.

@@ -3,6 +3,7 @@
 //   PingCycleMs  REG_DWORD  ping interval per host (1..10000)
 //   WindowX/Y    REG_DWORD  last window position (signed)
 //   AlwaysOnTop  REG_DWORD  0/1
+//   MinimizeToTray REG_DWORD 0/1 (1: no taskbar button, minimize hides to tray)
 //   Hosts        REG_SZ     JSON array of hosts + actions (passwords DPAPI-encrypted)
 //   Presets      REG_SZ     JSON document of IPv4 presets (same format as export files)
 #pragma once
@@ -16,10 +17,11 @@
 #include "model.h"
 
 struct AppSettings {
-    DWORD pingCycleMs = 1000;
+    DWORD pingCycleMs = 5000;
     int windowX = INT_MIN;
     int windowY = INT_MIN;
     bool alwaysOnTop = false;
+    bool minimizeToTray = true;
     std::vector<HostEntry> hosts;
     std::vector<Preset> presets;
 };

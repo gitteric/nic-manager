@@ -1,6 +1,7 @@
 {
   "cmake.useCMakePresets": "always",
   "cmake.configureOnOpen": true,
+  "cmake.cmakePath": "C:/msys64/ucrt64/bin/cmake.exe",
   "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
   "C_Cpp.default.cppStandard": "c++17",
   "files.associations": { "*.rc.in": "rc", "*.manifest.in": "xml" }

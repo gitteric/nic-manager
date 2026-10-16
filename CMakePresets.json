@@ -2,36 +2,68 @@
   "version": 3,
   "configurePresets": [
     {
-      "name": "vs-base",
+      "name": "mingw-base",
       "hidden": true,
-      "generator": "Visual Studio 17 2022",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}"
     },
     {
-      "name": "x64",
-      "displayName": "Windows x64 (MSVC)",
-      "inherits": "vs-base",
-      "architecture": "x64"
+      "name": "mingw-x64-debug",
+      "displayName": "MSYS2 UCRT64 (64-bit) Debug",
+      "inherits": "mingw-base",
+      "environment": { "PATH": "C:/msys64/ucrt64/bin;$penv{PATH}" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "C:/msys64/ucrt64/bin/g++.exe",
+        "CMAKE_RC_COMPILER": "C:/msys64/ucrt64/bin/windres.exe",
+        "CMAKE_MAKE_PROGRAM": "C:/msys64/ucrt64/bin/ninja.exe"
+      }
     },
     {
-      "name": "x86",
-      "displayName": "Windows x86 / 32-bit (MSVC)",
-      "inherits": "vs-base",
-      "architecture": "Win32"
+      "name": "mingw-x64-release",
+      "displayName": "MSYS2 UCRT64 (64-bit) Release",
+      "inherits": "mingw-x64-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     },
     {
-      "name": "x64-noadmin",
-      "displayName": "Windows x64, no elevation (debugging UI only)",
-      "inherits": "vs-base",
-      "architecture": "x64",
+      "name": "mingw-x64-noadmin",
+      "displayName": "MSYS2 UCRT64 (64-bit) Debug, no elevation (UI debugging)",
+      "inherits": "mingw-x64-debug",
       "cacheVariables": { "NICMGR_REQUIRE_ADMIN": "OFF" }
+    },
+    {
+      "name": "mingw-x86-release",
+      "displayName": "MSYS2 MINGW32 (32-bit) Release",
+      "inherits": "mingw-base",
+      "environment": { "PATH": "C:/msys64/mingw32/bin;$penv{PATH}" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "C:/msys64/mingw32/bin/g++.exe",
+        "CMAKE_RC_COMPILER": "C:/msys64/mingw32/bin/windres.exe",
+        "CMAKE_MAKE_PROGRAM": "C:/msys64/mingw32/bin/ninja.exe"
+      }
+    },
+    {
+      "name": "msvc-x64",
+      "displayName": "MSVC x64 (needs Visual Studio 2022 Build Tools)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "msvc-x86",
+      "displayName": "MSVC x86 (needs Visual Studio 2022 Build Tools)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build/${presetName}"
     }
   ],
   "buildPresets": [
-    { "name": "x64-debug", "configurePreset": "x64", "configuration": "Debug" },
-    { "name": "x64-release", "configurePreset": "x64", "configuration": "Release" },
-    { "name": "x86-debug", "configurePreset": "x86", "configuration": "Debug" },
-    { "name": "x86-release", "configurePreset": "x86", "configuration": "Release" },
-    { "name": "x64-noadmin-debug", "configurePreset": "x64-noadmin", "configuration": "Debug" }
+    { "name": "mingw-x64-debug", "configurePreset": "mingw-x64-debug" },
+    { "name": "mingw-x64-release", "configurePreset": "mingw-x64-release" },
+    { "name": "mingw-x64-noadmin", "configurePreset": "mingw-x64-noadmin" },
+    { "name": "mingw-x86-release", "configurePreset": "mingw-x86-release" },
+    { "name": "msvc-x64-release", "configurePreset": "msvc-x64", "configuration": "Release" },
+    { "name": "msvc-x86-release", "configurePreset": "msvc-x86", "configuration": "Release" }
   ]
 }

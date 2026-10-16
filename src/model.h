@@ -36,12 +36,15 @@ struct Adapter {
     bool connected = false;
     bool ipv4Enabled = false;
     std::wstring dhcpServer;
+    std::wstring linkLocal;  // 169.254.x.x autoconfiguration address, display only
     Ipv4Config cfg;
+    bool wireless = false;  // IEEE 802.11 adapter
 
     bool operator==(const Adapter& o) const {
         return guid == o.guid && name == o.name && device == o.device && enabled == o.enabled &&
                connected == o.connected && ipv4Enabled == o.ipv4Enabled &&
-               dhcpServer == o.dhcpServer && cfg == o.cfg;
+               dhcpServer == o.dhcpServer && linkLocal == o.linkLocal && cfg == o.cfg &&
+               wireless == o.wireless;
     }
     bool operator!=(const Adapter& o) const { return !(*this == o); }
 };
@@ -73,7 +76,13 @@ struct VncSettings {
     std::wstring password;
 };
 
-using ActionSettings = std::variant<RdpSettings, PuttySettings, VncSettings>;
+struct BrowserSettings {
+    std::wstring host;
+    int port = 80;
+    bool https = false;
+};
+
+using ActionSettings = std::variant<RdpSettings, PuttySettings, VncSettings, BrowserSettings>;
 
 struct HostAction {
     ActionSettings settings;

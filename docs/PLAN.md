@@ -5,7 +5,7 @@ list of hosts, rewritten in C++ against the plain Win32 API.
 
 ## 1. GUI sketch
 
-200 px wide (scaled with DPI). The window grows with its content and only
+300 px wide (scaled with DPI). The window grows with its content and only
 scrolls when it would be taller than the desktop work area. It sits next
 to the tray, grows upwards, and remembers where you dragged it.
 
@@ -45,7 +45,7 @@ to the tray, grows upwards, and remembers where you dragged it.
 
 Right-click on an adapter: **Save IPv4 config as preset…**, **Apply preset ▸**, **Refresh**.
 
-Tray icon: left click shows/hides. Right click opens **Show/Hide**, **Edit IPv4 presets…**, **Ping cycle ▸** (100 ms … 10 s, Custom 1–10000 ms), **Always on top**, **Exit**.
+Tray icon: left click shows/hides. Right click opens **Show/Hide**, **Edit IPv4 presets…**, **Ping cycle ▸** (100 ms … 10 s, Custom 1–10000 ms), **Always on top**, **Minimize to tray**, **Exit**.
 
 Bottom bar: open the classic Network Connections window (`control ncpa.cpl`), flush the DNS cache (`ipconfig /flushdns`), and renew DHCP (`ipconfig /renew`, for the expanded adapter or for all of them).
 
@@ -84,24 +84,27 @@ Rust would be the better choice if the tool grew a lot of parsing or concurrent 
 
 ## 3. VS Code
 
-VS Code works well for this. It edits and debugs, and the Microsoft C++ compiler (MSVC) builds the code.
+VS Code works well for this. It edits, builds through CMake Tools, and debugs. The default presets use the MSYS2 GCC toolchain in `C:\msys64`. MSVC presets are there too, if you ever install the Visual Studio Build Tools.
 
-1. Install the **Build Tools for Visual Studio 2022** (free) with the workload "Desktop development with C++". Make sure *MSVC v143* and a *Windows 11 SDK* are ticked. CMake comes with it.
-2. In VS Code, install the extensions **C/C++** (`ms-vscode.cpptools`) and **CMake Tools** (`ms-vscode.cmake-tools`). The repo's `.vscode/extensions.json` suggests both.
-3. Open the folder. CMake Tools reads `CMakePresets.json` and asks for a preset:
-   - `x64`: 64-bit build.
-   - `x86`: 32-bit build, for Windows 10 32-bit.
-   - `x64-noadmin`: a build that doesn't request elevation, for debugging the UI.
-4. Build with **F7** (or *CMake: Build*). Debug with **F5**, which uses `.vscode/launch.json`.
+1. In an **MSYS2 UCRT64** shell, install CMake, Ninja and gdb next to the g++ you already have:
+   `pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-gdb`
+   For 32-bit builds, also install `mingw-w64-i686-gcc mingw-w64-i686-ninja`, which go into `C:\msys64\mingw32`.
+2. In VS Code, install **C/C++** (`ms-vscode.cpptools`) and **CMake Tools** (`ms-vscode.cmake-tools`). `.vscode/settings.json` points CMake Tools at `C:/msys64/ucrt64/bin/cmake.exe`.
+3. Open the folder and run **CMake: Select Configure Preset**:
+   - `mingw-x64-debug` / `mingw-x64-release`: 64-bit builds.
+   - `mingw-x86-release`: 32-bit build, for Windows 10 32-bit.
+   - `mingw-x64-noadmin`: a build that doesn't request elevation, for debugging the UI.
+   - `msvc-x64` / `msvc-x86`: only if VS 2022 Build Tools are installed.
+4. Build with **F7** (or *CMake: Build*). Debug with **F5**, which uses gdb from MSYS2.
 
-The normal build requests administrator rights, because netsh needs them to change adapters. To debug that build, start VS Code as administrator. Otherwise, use the `x64-noadmin` preset: the UI, ping list and presets all work, and applying a change shows an "access denied" message. Running `NicManager.exe --demo` shows sample adapters and only simulates commands, which is handy for UI work.
+The normal build requests administrator rights, because netsh needs them to change adapters. To debug that build, start VS Code as administrator. Otherwise, use the `mingw-x64-noadmin` preset: the UI, ping list and presets all work, and applying a change shows an "access denied" message. Running `NicManager.exe --demo` shows sample adapters and only simulates commands, which is handy for UI work.
 
 From a terminal:
 
 ```
-cmake --preset x64
-cmake --build --preset x64-release
-build\x64\Release\NicManager.exe
+cmake --preset mingw-x64-release
+cmake --build --preset mingw-x64-release
+build\mingw-x64-release\NicManager.exe
 ```
 
 ## 4. Frameworks and libraries
@@ -169,9 +172,10 @@ Behaviour I chose where your list left it open:
 
 | Value | Type | Content |
 |---|---|---|
-| `PingCycleMs` | DWORD | 1–10000 |
+| `PingCycleMs` | DWORD | 1–10000, default 5000 |
 | `WindowX`, `WindowY` | DWORD | last position |
 | `AlwaysOnTop` | DWORD | 0/1 |
+| `MinimizeToTray` | DWORD | 1 (default): tray only, minimize hides; 0: taskbar button too |
 | `Hosts` | SZ | JSON: hosts and their actions; passwords DPAPI-encrypted (`"dpapi:…"`) |
 | `Presets` | SZ | JSON, the same format as the export file |
 
@@ -207,7 +211,7 @@ Import validates every address and replaces presets that have the same name.
 | `src/settings.*` | registry, DPAPI, JSON mapping, file I/O |
 | `src/dialogs.*` | action editor, preset manager, text prompt |
 | `src/ipaddr.*`, `src/json.*` | validation and JSON |
-| `src/actions.*` | RDP / PuTTY / VNC hulls |
+| `src/actions.*` | RDP / PuTTY / VNC / Browser hulls |
 | `src/theme.h`, `src/model.h` | colours, data types |
 | `res/` | dialog templates, manifest (elevation, DPI, common controls v6) |
 

@@ -25,6 +25,8 @@ constexpr UINT WM_APP_EDITKEY = WM_APP + 5;  // wParam: 1 commit, 0 cancel; lPar
 
 constexpr UINT_PTR kTimerSpin = 1;
 constexpr UINT_PTR kTimerStatus = 2;
+constexpr UINT_PTR kTimerToast = 3;
+constexpr UINT kToastMs = 5000;
 constexpr DWORD kJobTimeoutMs = 60000;  // whole job; single commands are capped at 20 s
 constexpr UINT kTrayId = 1;
 constexpr int kEditId = 100;
@@ -40,9 +42,13 @@ constexpr wchar_t kGlyphNetwork = 0xE839;
 constexpr wchar_t kGlyphGlobe = 0xE774;
 constexpr wchar_t kGlyphRefresh = 0xE72C;
 constexpr wchar_t kGlyphPlay = 0xE768;
+constexpr wchar_t kGlyphWifi = 0xE701;
+constexpr wchar_t kGlyphCopy = 0xE8C8;
+constexpr wchar_t kGlyphMinimize = 0xE921;
+constexpr wchar_t kGlyphError = 0xEA39;
 
 enum : UINT {
-    IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
+    IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
     IDM_CYCLE_BASE = 200,
     IDM_APPLY_PRESET_BASE = 1000,
 };
@@ -59,6 +65,18 @@ void DrawStr(HDC dc, HFONT font, const std::wstring& s, RECT rc, COLORREF color,
     SetTextColor(dc, color);
     SetBkMode(dc, TRANSPARENT);
     DrawTextW(dc, s.c_str(), (int)s.size(), &rc, flags | DT_NOPREFIX);
+}
+
+void CopyToClipboard(HWND owner, const std::wstring& text) {
+    if (!OpenClipboard(owner)) return;
+    EmptyClipboard();
+    size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    if (HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+        memcpy(GlobalLock(mem), text.c_str(), bytes);
+        GlobalUnlock(mem);
+        if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
+    }
+    CloseClipboard();
 }
 
 void DrawGlyph(HDC dc, HFONT font, wchar_t glyph, RECT rc, COLORREF color) {
@@ -161,8 +179,11 @@ bool MainWindow::Create(HINSTANCE inst, bool demo) {
     wc.lpszClassName = kClassName;
     if (!RegisterClassExW(&wc)) return false;
 
-    DWORD ex = WS_EX_TOOLWINDOW | (m_settings.alwaysOnTop ? WS_EX_TOPMOST : 0);
-    m_hwnd = CreateWindowExW(ex, kClassName, L"NIC Manager", WS_POPUP | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
+    DWORD ex = (m_settings.minimizeToTray ? WS_EX_TOOLWINDOW : WS_EX_APPWINDOW) |
+               (m_settings.alwaysOnTop ? WS_EX_TOPMOST : 0);
+    // WS_MINIMIZEBOX + WS_SYSMENU let the taskbar button minimize/restore the popup.
+    m_hwnd = CreateWindowExW(ex, kClassName, L"NIC Manager", WS_POPUP | WS_CLIPCHILDREN | WS_MINIMIZEBOX | WS_SYSMENU,
+                             CW_USEDEFAULT, CW_USEDEFAULT,
                              200, 200, nullptr, nullptr, inst, this);
     if (!m_hwnd) return false;
     ShowWindowNear();
@@ -212,7 +233,7 @@ void MainWindow::OnCreate() {
 
 void MainWindow::UpdateDpi(UINT dpi) {
     m_dpi = dpi ? dpi : 96;
-    M.width = S(200);
+    M.width = S(300);
     M.title = S(26);
     M.bottom = S(32);
     M.header = S(24);
@@ -280,6 +301,7 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: OnPaint(); return 0;
     case WM_SIZE:
+        if (wp == SIZE_MINIMIZED) return 0;
         PlaceButtons();
         PositionEdit();
         InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -292,6 +314,26 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             if (pt.y < M.title && HitTest(pt).fixed < 0) return HTCAPTION;  // drag by the title strip
         }
         return hit;
+    }
+    case WM_MOVING: {
+        // Keep the window inside the work area of the monitor under the
+        // cursor and snap it to that area's edges.
+        RECT* r = reinterpret_cast<RECT*>(lp);
+        POINT cur;
+        GetCursorPos(&cur);
+        MONITORINFO mi{sizeof(mi)};
+        GetMonitorInfoW(MonitorFromPoint(cur, MONITOR_DEFAULTTONEAREST), &mi);
+        const RECT& work = mi.rcWork;
+        const int w = r->right - r->left, h = r->bottom - r->top, snap = S(16);
+        int x = r->left, y = r->top;
+        if (std::abs(x - work.left) < snap) x = work.left;
+        if (std::abs(x + w - work.right) < snap) x = work.right - w;
+        if (std::abs(y - work.top) < snap) y = work.top;
+        if (std::abs(y + h - work.bottom) < snap) y = work.bottom - h;
+        x = std::max<int>(work.left, std::min<int>(x, work.right - w));
+        y = std::max<int>(work.top, std::min<int>(y, work.bottom - h));
+        OffsetRect(r, x - r->left, y - r->top);
+        return TRUE;
     }
     case WM_EXITSIZEMOVE: {
         RECT wr;
@@ -350,6 +392,12 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             GetClientRect(m_hwnd, &rc);
             rc.top = rc.bottom - M.bottom;
             InvalidateRect(m_hwnd, &rc, FALSE);
+        } else if (wp == kTimerToast) {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(m_hwnd, &pt);
+            if (PtInRect(&m_toastRc, pt)) SetTimer(m_hwnd, kTimerToast, 1000, nullptr);  // held while hovered
+            else HideToast();
         } else if (wp == kTimerStatus) {
             KillTimer(m_hwnd, kTimerStatus);
             m_status.clear();
@@ -360,10 +408,7 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         if (LOWORD(lp) == WM_LBUTTONUP) ToggleVisible();
         else if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU) ShowTrayMenu();
         return 0;
-    case WM_APP_SHOW:
-        ShowWindow(m_hwnd, SW_SHOW);
-        SetForegroundWindow(m_hwnd);
-        return 0;
+    case WM_APP_SHOW: ShowRestored(); return 0;
     case WM_APP_ADAPTERS: OnAdapters(reinterpret_cast<std::vector<Adapter>*>(lp)); return 0;
     case WM_APP_PING: OnPing((uint32_t)wp, (ping::State)LOWORD(lp), HIWORD(lp)); return 0;
     case WM_APP_JOBDONE: OnJobDone(reinterpret_cast<netcmd::JobResult*>(lp)); return 0;
@@ -407,7 +452,10 @@ MainWindow::Row& MainWindow::Push(RowKind kind, int h) {
 std::wstring MainWindow::AdapterSummary(const Adapter& a) const {
     if (!a.enabled) return L"Disabled";
     if (!a.ipv4Enabled) return L"IPv4 not enabled";
-    if (a.cfg.addresses.empty()) return a.connected ? L"No IPv4 address" : L"Not connected";
+    if (a.cfg.addresses.empty()) {
+        if (!a.connected) return L"Not connected";
+        return a.linkLocal.empty() ? L"No IPv4 address" : a.linkLocal + L" (link-local)";
+    }
     std::wstring s = a.cfg.addresses.front().ip;
     if (a.cfg.addresses.size() > 1) s += L" (...)";
     return s;
@@ -418,6 +466,7 @@ std::wstring MainWindow::AdapterTip(const Adapter& a) const {
     if (!a.enabled) return s + L"\r\nDisabled";
     s += a.connected ? L"\r\nConnected" : L"\r\nNot connected";
     for (const auto& e : a.cfg.addresses) s += L"\r\n" + ip::Format(e);
+    if (!a.linkLocal.empty()) s += L"\r\n" + a.linkLocal + L" (link-local)";
     return s;
 }
 
@@ -452,6 +501,8 @@ void MainWindow::BuildLayout() {
             r.expanded = expanded;
             r.chevron = true;
             r.rowCmd = Cmd::ExpandAdapter;
+            if (a.wireless && a.enabled)
+                r.buttons.push_back({kGlyphWifi, Cmd::OpenWifi, L"Choose a Wi-Fi network"});
         }
         if (expanded) AddAdapterDetails(i);
     }
@@ -573,7 +624,13 @@ void MainWindow::AddAdapterDetails(int ai) {
         value(ip::Format(c.addresses[k]), k, EditKind::Address, isStatic, Cmd::EditAddr, isStatic && k > 0,
               Cmd::DelAddr);
     newSlot(EditKind::NewAddress);
-    if (c.addresses.empty() && m_editTarget.kind != EditKind::NewAddress)
+    if (!a.linkLocal.empty())  // assigned by Windows itself: shown, not editable
+    {
+        value(a.linkLocal + L"  (link-local)", -1, EditKind::None, false, Cmd::None, false, Cmd::None);
+        m_rows.back().dim = true;
+        m_rows.back().tip = L"Assigned by Windows when no other address is reachable";
+    }
+    if (c.addresses.empty() && a.linkLocal.empty() && m_editTarget.kind != EditKind::NewAddress)
         value(L"-", -1, EditKind::None, false, Cmd::None, false, Cmd::None);
 
     toggle(L"Auto DNS", c.dhcp && c.autoDns, c.dhcp, Cmd::ToggleAutoDns);
@@ -624,6 +681,8 @@ void MainWindow::PlaceButtons() {
     // Fixed buttons: title close + bottom bar shortcuts.
     m_fixed.clear();
     m_fixed.push_back({kGlyphClose, Cmd::Hide, L"Hide to tray", {M.width - M.title, 0, M.width, M.title}});
+    m_fixed.push_back({kGlyphMinimize, Cmd::Minimize, L"Minimize",
+                       {M.width - 2 * M.title, 0, M.width - M.title, M.title}});
     const int by = client.bottom - M.bottom;
     const int bw = S(28), bh = S(24);
     const struct { wchar_t g; Cmd c; const wchar_t* tip; } bar[] = {
@@ -639,6 +698,7 @@ void MainWindow::PlaceButtons() {
 }
 
 void MainWindow::UpdateWindowSize() {
+    if (IsIconic(m_hwnd)) return;  // the minimized rect is off screen on purpose
     RECT wr;
     GetWindowRect(m_hwnd, &wr);
     MONITORINFO mi{sizeof(mi)};
@@ -722,11 +782,12 @@ void MainWindow::OnPaint() {
         Fill(dc, thumb, m_hover.scrollbar || m_dragScroll ? theme::TextDim : theme::Border);
     }
     SelectClipRgn(dc, nullptr);
+    PaintToast(dc, bottom, client.right);
 
     // Title strip.
     RECT title{0, 0, client.right, M.title};
     Fill(dc, title, theme::Bg);
-    RECT tt{M.pad, 0, client.right - M.title, M.title};
+    RECT tt{M.pad, 0, client.right - 2 * M.title, M.title};
     DrawStr(dc, m_fontBold, L"NIC Manager", tt, theme::TextDim);
     if (!m_elevated) {
         SIZE sz;
@@ -742,7 +803,7 @@ void MainWindow::OnPaint() {
     RECT line{0, bottom, client.right, bottom + 1};
     Fill(dc, line, theme::Border);
     for (int i = 0; i < (int)m_fixed.size(); ++i)
-        PaintButton(dc, m_fixed[i], m_fixed[i].rc, m_hover.fixed == i && !(m_busy && i > 0), m_fontIcon);
+        PaintButton(dc, m_fixed[i], m_fixed[i].rc, m_hover.fixed == i && !(m_busy && IsBlockedWhileBusy(m_fixed[i].cmd)), m_fontIcon);
     int sx = m_fixed.empty() ? M.pad : m_fixed.back().rc.right + S(8);
     RECT status{sx, bottom + 1, client.right - S(6), client.bottom};
     if (m_busy) {
@@ -837,7 +898,7 @@ void MainWindow::PaintRow(HDC dc, const Row& r, int ri, int dy) {
             Fill(dc, hl, Lerp(theme::Detail, theme::SurfaceHover, 0.6));
         }
         RECT t{M.indent + S(6), rc.top, r.textRight, rc.bottom};
-        DrawStr(dc, m_font, r.text, t, r.text == L"-" ? theme::TextDisabled : theme::Text);
+        DrawStr(dc, m_font, r.text, t, r.text == L"-" || r.dim ? theme::TextDim : theme::Text);
         paintButtons();
         break;
     }
@@ -914,6 +975,10 @@ MainWindow::Hit MainWindow::HitTest(POINT pt) const {
             h.fixed = i;
             return h;
         }
+    if (!m_toastTitle.empty() && PtInRect(&m_toastRc, pt)) {
+        h.toast = PtInRect(&m_toastCopyRc, pt) ? 2 : 1;
+        return h;
+    }
     RECT client;
     GetClientRect(m_hwnd, &client);
     if (pt.y < M.title || pt.y >= client.bottom - M.bottom) return h;
@@ -978,6 +1043,15 @@ void MainWindow::OnLButtonDown(POINT pt, bool dbl) {
         return;
     }
     Hit h = HitTest(pt);
+    if (h.toast == 2) {
+        CopyToClipboard(m_hwnd, m_toastDetails);
+        SetStatus(L"Details copied", theme::TextDim, 2000);
+        return;
+    }
+    if (h.toast) {
+        HideToast();
+        return;
+    }
     if (h.scrollbar) {
         m_dragScroll = true;
         m_dragStartY = pt.y;
@@ -1026,7 +1100,8 @@ void MainWindow::OnRButtonUp(POINT pt) {
 }
 
 bool MainWindow::IsBlockedWhileBusy(Cmd cmd) const {
-    return cmd != Cmd::ExpandAdapter && cmd != Cmd::ExpandHost && cmd != Cmd::Hide;
+    return cmd != Cmd::ExpandAdapter && cmd != Cmd::ExpandHost && cmd != Cmd::Hide && cmd != Cmd::Minimize && cmd != Cmd::OpenWifi &&
+           cmd != Cmd::OpenNcpa;
 }
 
 void MainWindow::Execute(const Row* rowp, Cmd cmd) {
@@ -1172,6 +1247,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
         break;
 
     case Cmd::OpenNcpa: netcmd::OpenNetworkConnections(); break;
+    case Cmd::OpenWifi: netcmd::OpenWifiPicker(); break;
     case Cmd::FlushDns:
         RunJob(L"Flushing DNS cache", [](const netcmd::Deadline& dl) { return netcmd::FlushDns(dl); });
         break;
@@ -1183,6 +1259,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
         break;
     }
     case Cmd::Hide: ShowWindow(m_hwnd, SW_HIDE); break;
+    case Cmd::Minimize: ShowWindow(m_hwnd, m_settings.minimizeToTray ? SW_HIDE : SW_MINIMIZE); break;
     }
 }
 
@@ -1399,10 +1476,11 @@ void MainWindow::OnJobDone(netcmd::JobResult* raw) {
         SetStatus(L"Done", theme::Green, 2500);
     } else {
         SetStatus(L"Failed", theme::Red);
-        std::wstring msg = result->log;
-        if (msg.size() > 1800) msg = msg.substr(0, 1800) + L"\r\n...";
-        if (!m_elevated) msg = L"NIC Manager is not running as administrator.\r\n\r\n" + msg;
-        MessageBoxW(m_hwnd, msg.c_str(), L"Command failed", MB_OK | MB_ICONERROR);
+        std::wstring what = m_busyLabel;
+        if (what.size() > 3 && what.compare(what.size() - 3, 3, L"...") == 0) what.resize(what.size() - 3);
+        std::wstring text = result->error.empty() ? L"The command failed." : result->error;
+        if (!m_elevated) text += L" NIC Manager is not running as administrator.";
+        ShowToast(what + L" failed", text, result->log);
     }
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
@@ -1441,6 +1519,59 @@ void MainWindow::SyncPinger() {
     m_pinger.Sync(list);
 }
 
+void MainWindow::ShowToast(const std::wstring& title, const std::wstring& text, const std::wstring& details) {
+    m_toastTitle = title;
+    m_toastText = text;
+    m_toastDetails = details;
+    SetTimer(m_hwnd, kTimerToast, kToastMs, nullptr);
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MainWindow::HideToast() {
+    KillTimer(m_hwnd, kTimerToast);
+    m_toastTitle.clear();
+    m_toastRc = m_toastCopyRc = {};
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MainWindow::PaintToast(HDC dc, int bottom, int right) {
+    if (m_toastTitle.empty()) return;
+    const int pad = S(8), icon = S(16), btn = M.btn;
+    const int left = S(6), textLeft = left + S(3) + pad + icon + S(6), textRight = right - S(6) - pad - btn;
+    // Message wraps to at most four lines.
+    SelectObject(dc, m_fontSmall);
+    TEXTMETRICW tm;
+    GetTextMetricsW(dc, &tm);
+    RECT calc{0, 0, std::max(1, textRight - textLeft), 0};
+    DrawTextW(dc, m_toastText.c_str(), (int)m_toastText.size(), &calc, DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+    const int textH = std::min<int>(calc.bottom, tm.tmHeight * 4);
+    const int titleH = S(18);
+    const int h = pad + titleH + textH + pad;
+    m_toastRc = {left, bottom - S(6) - h, right - S(6), bottom - S(6)};
+    m_toastCopyRc = {m_toastRc.right - S(4) - btn, m_toastRc.top + S(4), m_toastRc.right - S(4), m_toastRc.top + S(4) + btn};
+
+    Fill(dc, m_toastRc, theme::RedTint);
+    SelectObject(dc, GetStockObject(DC_PEN));
+    SetDCPenColor(dc, theme::Red);
+    SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Rectangle(dc, m_toastRc.left, m_toastRc.top, m_toastRc.right, m_toastRc.bottom);
+    RECT barRc{m_toastRc.left, m_toastRc.top, m_toastRc.left + S(3), m_toastRc.bottom};
+    Fill(dc, barRc, theme::Red);
+    RECT iconRc{m_toastRc.left + S(3) + pad, m_toastRc.top + pad, m_toastRc.left + S(3) + pad + icon,
+                m_toastRc.top + pad + titleH};
+    DrawGlyph(dc, m_fontIcon, kGlyphError, iconRc, theme::Red);
+    RECT titleRc{textLeft, m_toastRc.top + pad, textRight, m_toastRc.top + pad + titleH};
+    DrawStr(dc, m_fontBold, m_toastTitle, titleRc, theme::Text);
+    RECT textRc{textLeft, titleRc.bottom, textRight, titleRc.bottom + textH};
+    DrawStr(dc, m_fontSmall, m_toastText, textRc, theme::Text, DT_WORDBREAK | DT_END_ELLIPSIS | DT_EDITCONTROL);
+    if (m_toastDetails.empty()) {
+        m_toastCopyRc = {};
+    } else {
+        Button copy{kGlyphCopy, Cmd::None, L"Copy details"};
+        PaintButton(dc, copy, m_toastCopyRc, m_hover.toast == 2, m_fontIcon);
+    }
+}
+
 void MainWindow::SetStatus(const std::wstring& text, COLORREF color, UINT ms) {
     m_status = text;
     m_statusColor = color;
@@ -1467,17 +1598,29 @@ void MainWindow::ShowWindowNear() {
     }
     SetWindowPos(m_hwnd, nullptr, x, y, M.width, S(200), SWP_NOZORDER | SWP_NOACTIVATE);
     Relayout();
-    ShowWindow(m_hwnd, SW_SHOW);
+    ShowRestored();
+}
+
+void MainWindow::ShowRestored() {
+    ShowWindow(m_hwnd, IsIconic(m_hwnd) ? SW_RESTORE : SW_SHOW);
     SetForegroundWindow(m_hwnd);
 }
 
 void MainWindow::ToggleVisible() {
-    if (IsWindowVisible(m_hwnd) && GetForegroundWindow() == m_hwnd) {
-        ShowWindow(m_hwnd, SW_HIDE);
-    } else {
-        ShowWindow(m_hwnd, SW_SHOW);
-        SetForegroundWindow(m_hwnd);
-    }
+    if (IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd) && GetForegroundWindow() == m_hwnd) ShowWindow(m_hwnd, SW_HIDE);
+    else ShowRestored();
+}
+
+void MainWindow::ApplyTaskbarMode() {
+    // The taskbar only picks up the style change while the window is hidden.
+    const bool visible = IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd);
+    if (IsIconic(m_hwnd)) ShowWindow(m_hwnd, SW_RESTORE);
+    ShowWindow(m_hwnd, SW_HIDE);
+    LONG_PTR ex = GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE) & ~(WS_EX_TOOLWINDOW | WS_EX_APPWINDOW);
+    ex |= m_settings.minimizeToTray ? WS_EX_TOOLWINDOW : WS_EX_APPWINDOW;
+    SetWindowLongPtrW(m_hwnd, GWL_EXSTYLE, ex);
+    SetWindowPos(m_hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    if (visible) ShowRestored();
 }
 
 void MainWindow::OpenPresetEditor() {
@@ -1488,7 +1631,7 @@ void MainWindow::OpenPresetEditor() {
 void MainWindow::ShowTrayMenu() {
     const DWORD cur = m_settings.pingCycleMs;
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, IDM_SHOW, IsWindowVisible(m_hwnd) ? L"Hide window" : L"Show window");
+    AppendMenuW(menu, MF_STRING, IDM_SHOW, IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd) ? L"Hide window" : L"Show window");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_PRESETS, L"Edit IPv4 presets...");
 
@@ -1505,6 +1648,7 @@ void MainWindow::ShowTrayMenu() {
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(cycle), (L"Ping cycle: " + FormatMs(cur)).c_str());
 
     AppendMenuW(menu, MF_STRING | (m_settings.alwaysOnTop ? MF_CHECKED : 0), IDM_TOPMOST, L"Always on top");
+    AppendMenuW(menu, MF_STRING | (m_settings.minimizeToTray ? MF_CHECKED : 0), IDM_TO_TRAY, L"Minimize to tray");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_EXIT, L"Exit");
 
@@ -1520,7 +1664,10 @@ void MainWindow::ShowTrayMenu() {
         settings::SaveGeneral(m_settings);
         m_pinger.SetCycle(ms);
     };
-    if (id == IDM_SHOW) ToggleVisible();
+    if (id == IDM_SHOW) {
+        if (IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd)) ShowWindow(m_hwnd, SW_HIDE);
+        else ShowRestored();
+    }
     else if (id == IDM_PRESETS) OpenPresetEditor();
     else if (id == IDM_EXIT) DestroyWindow(m_hwnd);
     else if (id == IDM_TOPMOST) {
@@ -1528,6 +1675,10 @@ void MainWindow::ShowTrayMenu() {
         SetWindowPos(m_hwnd, m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         settings::SaveGeneral(m_settings);
+    } else if (id == IDM_TO_TRAY) {
+        m_settings.minimizeToTray = !m_settings.minimizeToTray;
+        settings::SaveGeneral(m_settings);
+        ApplyTaskbarMode();
     } else if (id >= IDM_CYCLE_BASE && id < IDM_CYCLE_BASE + sizeof(kCycleChoices) / sizeof(kCycleChoices[0])) {
         setCycle(kCycleChoices[id - IDM_CYCLE_BASE]);
     } else if (id == IDM_CYCLE_CUSTOM) {

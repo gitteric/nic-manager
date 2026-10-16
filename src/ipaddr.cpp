@@ -59,6 +59,11 @@ bool IsValidHostname(const std::wstring& s) {
     return !allNumeric;
 }
 
+bool IsLinkLocal(const std::wstring& s) {
+    uint32_t v;
+    return ParseIpv4(s, &v) && (v >> 16) == 0xA9FE;
+}
+
 bool IsValidHost(const std::wstring& s) { return ParseIpv4(s) || IsValidHostname(s); }
 
 std::wstring PrefixToMask(int prefix) {

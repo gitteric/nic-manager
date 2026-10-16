@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 
+#include "ipaddr.h"
 #include "strutil.h"
 
 namespace netinfo {
@@ -35,6 +36,70 @@ std::wstring RegString(HKEY root, const std::wstring& path, const wchar_t* value
         return {};
     s.resize(wcsnlen(s.c_str(), s.size()));
     return s;
+}
+
+// REG_MULTI_SZ, or a REG_SZ separated by commas/spaces (NameServer), as a list.
+std::vector<std::wstring> RegList(HKEY root, const std::wstring& path, const wchar_t* value) {
+    std::vector<std::wstring> out;
+    DWORD size = 0;
+    if (RegGetValueW(root, path.c_str(), value, RRF_RT_REG_SZ | RRF_RT_REG_MULTI_SZ, nullptr, nullptr, &size) !=
+            ERROR_SUCCESS ||
+        size == 0)
+        return out;
+    std::wstring buf(size / sizeof(wchar_t) + 1, L'\0');
+    if (RegGetValueW(root, path.c_str(), value, RRF_RT_REG_SZ | RRF_RT_REG_MULTI_SZ, nullptr, buf.data(), &size) !=
+        ERROR_SUCCESS)
+        return out;
+    std::wstring cur;
+    for (wchar_t c : buf) {
+        if (c == L'\0' || c == L',' || c == L' ') {
+            if (!cur.empty()) out.push_back(cur);
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    return out;
+}
+
+// The persistent IPv4 configuration as stored by Windows. Unlike
+// GetAdaptersAddresses this is also correct for adapters without a link,
+// which report no addresses and an unreliable DHCP flag.
+//
+// EnableDHCP alone is not trustworthy: after `netsh ... static` on a Wi-Fi
+// adapter without a link it can stay 1 while IPAddress holds the static
+// addresses. Windows' own dialog shows such an adapter as static, so any
+// stored, usable static address wins over the flag.
+bool ReadStoredConfig(const std::wstring& guid, Ipv4Config& cfg) {
+    const std::wstring key = std::wstring(kTcpipIfKey) + guid;
+    DWORD dhcp = 0, size = sizeof(dhcp);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, key.c_str(), L"EnableDHCP", RRF_RT_REG_DWORD, nullptr, &dhcp, &size) !=
+        ERROR_SUCCESS)
+        return false;
+    cfg = {};
+    Ipv4Config st;
+    auto ips = RegList(HKEY_LOCAL_MACHINE, key, L"IPAddress");
+    auto masks = RegList(HKEY_LOCAL_MACHINE, key, L"SubnetMask");
+    for (size_t i = 0; i < ips.size(); ++i) {
+        int prefix = 24;
+        if (i < masks.size()) ip::MaskToPrefix(masks[i], &prefix);
+        if (ip::ParseIpv4(ips[i]) && ips[i] != L"0.0.0.0" && !ip::IsLinkLocal(ips[i]))
+            st.addresses.push_back({ips[i], prefix});
+    }
+    for (const auto& g : RegList(HKEY_LOCAL_MACHINE, key, L"DefaultGateway"))
+        if (ip::ParseIpv4(g) && g != L"0.0.0.0") st.gateways.push_back(g);
+
+    cfg.dhcp = dhcp != 0 && st.addresses.empty();
+    if (!cfg.dhcp) {
+        cfg.addresses = std::move(st.addresses);
+        cfg.gateways = std::move(st.gateways);
+    }
+    // Static DNS lives in NameServer only; DhcpNameServer is ignored.
+    auto ns = RegList(HKEY_LOCAL_MACHINE, key, L"NameServer");
+    cfg.autoDns = cfg.dhcp && ns.empty();
+    for (const auto& d : ns)
+        if (ip::ParseIpv4(d)) cfg.dns.push_back(d);
+    return true;
 }
 
 std::wstring SockToString(const SOCKADDR* sa) {
@@ -72,12 +137,15 @@ std::map<std::wstring, Adapter> QueryIpHelper() {
         ad.enabled = true;
         ad.connected = a->OperStatus == IfOperStatusUp;
         ad.ipv4Enabled = (a->Flags & IP_ADAPTER_IPV4_ENABLED) != 0;
+        ad.wireless = a->IfType == IF_TYPE_IEEE80211;
         ad.cfg.dhcp = (a->Flags & IP_ADAPTER_DHCP_ENABLED) != 0;
         if (ad.cfg.dhcp) ad.dhcpServer = SockToString(a->Dhcpv4Server.lpSockaddr);
 
         for (auto* u = a->FirstUnicastAddress; u; u = u->Next) {
             std::wstring s = SockToString(u->Address.lpSockaddr);
-            if (!s.empty()) ad.cfg.addresses.push_back({s, (int)u->OnLinkPrefixLength});
+            if (s.empty()) continue;
+            if (ip::IsLinkLocal(s)) ad.linkLocal = s;  // shown, but never treated as configured
+            else ad.cfg.addresses.push_back({s, (int)u->OnLinkPrefixLength});
         }
         for (auto* g = a->FirstGatewayAddress; g; g = g->Next) {
             std::wstring s = SockToString(g->Address.lpSockaddr);
@@ -87,10 +155,20 @@ std::map<std::wstring, Adapter> QueryIpHelper() {
             std::wstring s = SockToString(d->Address.lpSockaddr);
             if (!s.empty()) ad.cfg.dns.push_back(s);
         }
-        // Statically configured DNS servers live in the "NameServer" value;
-        // empty means the servers come from DHCP.
-        std::wstring ns = RegString(HKEY_LOCAL_MACHINE, std::wstring(kTcpipIfKey) + ad.guid, L"NameServer");
-        ad.cfg.autoDns = ad.cfg.dhcp && Trim(ns).empty();
+        // The registry is authoritative for the modes. For connected adapters
+        // the live values (which include DHCP-assigned ones) are kept; without
+        // a link only the stored configuration is meaningful.
+        Ipv4Config stored;
+        if (ReadStoredConfig(ad.guid, stored)) {
+            ad.cfg.dhcp = stored.dhcp;
+            ad.cfg.autoDns = stored.autoDns;
+            if (!ad.connected) {
+                ad.cfg.addresses = stored.addresses;
+                ad.cfg.gateways = stored.gateways;
+                if (!stored.autoDns) ad.cfg.dns = stored.dns;
+            }
+        }
+        if (!ad.cfg.dhcp) ad.dhcpServer.clear();
         result[ad.guid] = std::move(ad);
     }
     return result;
@@ -113,8 +191,10 @@ std::vector<Adapter> EnumerateAdapters() {
             if (drv == INVALID_HANDLE_VALUE) continue;
             wchar_t guid[64] = {};
             DWORD size = sizeof(guid), characteristics = 0, csize = sizeof(characteristics);
+            DWORD ifType = 0, tsize = sizeof(ifType);
             LONG r = RegGetValueW(drv, nullptr, L"NetCfgInstanceId", RRF_RT_REG_SZ, nullptr, guid, &size);
             RegGetValueW(drv, nullptr, L"Characteristics", RRF_RT_REG_DWORD, nullptr, &characteristics, &csize);
+            RegGetValueW(drv, nullptr, L"*IfType", RRF_RT_REG_DWORD, nullptr, &ifType, &tsize);
             RegCloseKey(drv);
             if (r != ERROR_SUCCESS || (characteristics & NCF_HIDDEN_FLAG)) continue;
 
@@ -131,6 +211,7 @@ std::vector<Adapter> EnumerateAdapters() {
             Adapter ad;
             ad.guid = key;
             ad.enabled = false;
+            ad.wireless = ifType == IF_TYPE_IEEE80211;
             ad.name = RegString(HKEY_LOCAL_MACHINE, std::wstring(kNetClassKey) + guid + L"\\Connection", L"Name");
             if (ad.name.empty()) continue;  // not a network connection
             wchar_t desc[256] = {};
@@ -155,12 +236,13 @@ std::vector<Adapter> EnumerateAdapters() {
 std::vector<Adapter> DemoAdapters() {
     std::vector<Adapter> list(4);
     list[0] = {L"{DEMO-0001}", L"Demo LAN", L"Intel(R) Ethernet Connection I219-LM", true, true, true,
-               L"192.168.1.1", {true, true, {{L"192.168.1.57", 24}}, {L"192.168.1.1"}, {L"192.168.1.1"}}};
-    list[1] = {L"{DEMO-0002}", L"Demo Lab", L"USB 3.0 Gigabit Ethernet Adapter", true, true, true, L"",
+               L"192.168.1.1", L"", {true, true, {{L"192.168.1.57", 24}}, {L"192.168.1.1"}, {L"192.168.1.1"}}};
+    list[1] = {L"{DEMO-0002}", L"Demo Lab", L"USB 3.0 Gigabit Ethernet Adapter", true, true, true, L"", L"",
                {false, false, {{L"10.10.0.5", 16}, {L"172.16.4.20", 24}}, {L"10.10.0.1"}, {L"10.10.0.1", L"1.1.1.1"}}};
-    list[2] = {L"{DEMO-0003}", L"Demo WiFi", L"Intel(R) Wi-Fi 6 AX201 160MHz", true, false, true, L"", {}};
+    list[2] = {L"{DEMO-0003}", L"Demo WiFi", L"Intel(R) Wi-Fi 6 AX201 160MHz", true, false, true, L"", L"", {}};
+    list[2].wireless = true;
     list[3] = {L"{DEMO-0004}", L"Demo Bluetooth", L"Bluetooth Device (Personal Area Network)", false, false, false,
-               L"", {}};
+               L"", L"", {}};
     return list;
 }
 

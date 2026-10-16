@@ -51,7 +51,7 @@ BEGIN
     EDITTEXT        IDC_PORT, 7, 73, 40, 13, ES_NUMBER
     LTEXT           "User", IDC_LBL_USER, 53, 63, 126, 9
     EDITTEXT        IDC_USER, 53, 73, 126, 13, ES_AUTOHSCROLL
-    LTEXT           "Password", IDC_STATIC, 7, 91, 172, 9
+    LTEXT           "Password", IDC_LBL_PASS, 7, 91, 172, 9
     EDITTEXT        IDC_PASS, 7, 101, 172, 13, ES_PASSWORD | ES_AUTOHSCROLL
     LTEXT           "Display", IDC_LBL_MODE, 7, 119, 172, 9
     COMBOBOX        IDC_MODE, 7, 129, 172, 40, CBS_DROPDOWNLIST | WS_TABSTOP

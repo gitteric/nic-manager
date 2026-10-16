@@ -31,7 +31,7 @@ private:
         ToggleEnabled, ToggleDhcp, ToggleAutoDns,
         EditAddr, DelAddr, AddAddr, EditGw, DelGw, AddGw, EditDns, DelDns, AddDns,
         AddHost, EditHost, DelHost, AddAction, RunAction, EditAction, DelAction,
-        OpenNcpa, FlushDns, RenewDhcp, Hide,
+        OpenNcpa, OpenWifi, FlushDns, RenewDhcp, Hide, Minimize,
     };
     enum class EditKind { None, Address, NewAddress, Gateway, NewGateway, Dns, NewDns, Host, NewHost };
     enum class RowKind { Header, Adapter, Toggle, Caption, Value, Host, Action, Hint };
@@ -80,6 +80,7 @@ private:
         int button = -1;  // index into row.buttons
         bool toggle = false;
         bool scrollbar = false;
+        int toast = 0;  // 1 = message body (dismiss), 2 = copy details
     };
 
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -137,12 +138,18 @@ private:
     void OnPing(uint32_t id, ping::State state, int rtt);
     void SyncPinger();
     void SetStatus(const std::wstring& text, COLORREF color, UINT ms = 4000);
+    // Error strip above the bottom bar; hides itself after a few seconds.
+    void ShowToast(const std::wstring& title, const std::wstring& text, const std::wstring& details);
+    void HideToast();
+    void PaintToast(HDC dc, int bottom, int right);
 
     // menus
     void ShowTrayMenu();
     void ShowAdapterMenu(int ai, POINT screen);
     void ShowWindowNear();
     void ToggleVisible();
+    void ShowRestored();
+    void ApplyTaskbarMode();  // taskbar button only while not minimizing to tray
     void OpenPresetEditor();
 
     std::wstring AdapterSummary(const Adapter& a) const;
@@ -186,6 +193,8 @@ private:
     int m_spin = 0;
     std::thread m_job;
     std::wstring m_status;
+    std::wstring m_toastTitle, m_toastText, m_toastDetails;
+    RECT m_toastRc{}, m_toastCopyRc{};
     COLORREF m_statusColor = 0;
 
     ping::Pinger m_pinger;

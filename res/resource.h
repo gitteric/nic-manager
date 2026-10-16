@@ -16,6 +16,7 @@
 #define IDC_LBL_PORT      1016
 #define IDC_LBL_USER      1017
 #define IDC_LBL_MODE      1018
+#define IDC_LBL_PASS      1019
 
 #define IDC_PRESET_LIST   1020
 #define IDC_DELETE        1021

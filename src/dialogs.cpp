@@ -115,13 +115,31 @@ struct ActionData {
 
 int SelectedType(HWND dlg) { return (int)SendDlgItemMessageW(dlg, IDC_TYPE, CB_GETCURSEL, 0, 0); }
 
+// The "mode" combo is the RDP display mode or the browser protocol.
+void FillModes(HWND dlg, int type) {
+    SendDlgItemMessageW(dlg, IDC_MODE, CB_RESETCONTENT, 0, 0);
+    if (type == 3) {
+        for (const wchar_t* t : {L"http", L"https"}) SendDlgItemMessageW(dlg, IDC_MODE, CB_ADDSTRING, 0, (LPARAM)t);
+        SetDlgItemTextW(dlg, IDC_LBL_MODE, L"Protocol");
+    } else {
+        for (const wchar_t* t : {L"Full screen", L"Window 1024 x 768"})
+            SendDlgItemMessageW(dlg, IDC_MODE, CB_ADDSTRING, 0, (LPARAM)t);
+        SetDlgItemTextW(dlg, IDC_LBL_MODE, L"Display");
+    }
+    SendDlgItemMessageW(dlg, IDC_MODE, CB_SETCURSEL, 0, 0);
+}
+
 void UpdateActionFields(HWND dlg, bool resetPort) {
-    int type = SelectedType(dlg);  // 0 RDP, 1 PuTTY, 2 VNC
-    bool port = type != 0, user = type != 2, mode = type == 0;
+    int type = SelectedType(dlg);  // 0 RDP, 1 PuTTY, 2 VNC, 3 Browser
+    bool port = type != 0, user = type == 0 || type == 1, pass = type != 3, mode = type == 0 || type == 3;
     for (int id : {IDC_LBL_PORT, IDC_PORT}) ShowWindow(GetDlgItem(dlg, id), port ? SW_SHOW : SW_HIDE);
     for (int id : {IDC_LBL_USER, IDC_USER}) ShowWindow(GetDlgItem(dlg, id), user ? SW_SHOW : SW_HIDE);
+    for (int id : {IDC_LBL_PASS, IDC_PASS}) ShowWindow(GetDlgItem(dlg, id), pass ? SW_SHOW : SW_HIDE);
     for (int id : {IDC_LBL_MODE, IDC_MODE}) ShowWindow(GetDlgItem(dlg, id), mode ? SW_SHOW : SW_HIDE);
-    if (resetPort && port) SetDlgItemInt(dlg, IDC_PORT, type == 1 ? 22 : 5900, FALSE);
+    if (resetPort) {
+        FillModes(dlg, type);
+        if (port) SetDlgItemInt(dlg, IDC_PORT, type == 1 ? 22 : type == 2 ? 5900 : 80, FALSE);
+    }
 
     // Without a port field the user field takes the full row.
     RECT label{port ? 53 : 7, 63, 179, 72}, edit{port ? 53 : 7, 73, 179, 86};
@@ -138,13 +156,11 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_INITDIALOG: {
         d = reinterpret_cast<ActionData*>(lp);
         SetWindowLongPtrW(dlg, DWLP_USER, lp);
-        for (const wchar_t* t : {L"Remote Desktop (RDP)", L"PuTTY (SSH)", L"TightVNC"})
+        for (const wchar_t* t : {L"Remote Desktop (RDP)", L"PuTTY (SSH)", L"TightVNC", L"Browser"})
             SendDlgItemMessageW(dlg, IDC_TYPE, CB_ADDSTRING, 0, (LPARAM)t);
-        for (const wchar_t* t : {L"Full screen", L"Window 1024 x 768"})
-            SendDlgItemMessageW(dlg, IDC_MODE, CB_ADDSTRING, 0, (LPARAM)t);
         const ActionSettings& s = d->action->settings;
         SendDlgItemMessageW(dlg, IDC_TYPE, CB_SETCURSEL, s.index(), 0);
-        SendDlgItemMessageW(dlg, IDC_MODE, CB_SETCURSEL, 0, 0);
+        FillModes(dlg, (int)s.index());
         std::wstring host = d->defaultHost;
         if (auto* r = std::get_if<RdpSettings>(&s)) {
             if (!r->host.empty()) host = r->host;
@@ -160,6 +176,10 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (!v->host.empty()) host = v->host;
             SetDlgItemInt(dlg, IDC_PORT, v->port, FALSE);
             SetDlgItemTextW(dlg, IDC_PASS, v->password.c_str());
+        } else if (auto* b = std::get_if<BrowserSettings>(&s)) {
+            if (!b->host.empty()) host = b->host;
+            SetDlgItemInt(dlg, IDC_PORT, b->port, FALSE);
+            SendDlgItemMessageW(dlg, IDC_MODE, CB_SETCURSEL, b->https ? 1 : 0, 0);
         }
         SetDlgItemTextW(dlg, IDC_HOST, host.c_str());
         SetWindowTextW(dlg, d->isNew ? L"Add host action" : L"Edit host action");
@@ -170,6 +190,11 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_COMMAND:
         if (LOWORD(wp) == IDC_TYPE && HIWORD(wp) == CBN_SELCHANGE) {
             UpdateActionFields(dlg, true);
+        } else if (LOWORD(wp) == IDC_MODE && HIWORD(wp) == CBN_SELCHANGE && SelectedType(dlg) == 3) {
+            // Follow the protocol's default port unless a custom one was entered.
+            bool https = SendDlgItemMessageW(dlg, IDC_MODE, CB_GETCURSEL, 0, 0) == 1;
+            UINT port = GetDlgItemInt(dlg, IDC_PORT, nullptr, FALSE);
+            if (port == 80 || port == 443 || port == 0) SetDlgItemInt(dlg, IDC_PORT, https ? 443 : 80, FALSE);
         } else if (LOWORD(wp) == IDOK) {
             std::wstring host = ItemText(dlg, IDC_HOST);
             if (!ip::IsValidHost(host)) {
@@ -190,8 +215,11 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 d->action->settings = RdpSettings{host, user, pass, full};
             } else if (type == 1) {
                 d->action->settings = PuttySettings{host, port, user, pass};
-            } else {
+            } else if (type == 2) {
                 d->action->settings = VncSettings{host, port, pass};
+            } else {
+                bool https = SendDlgItemMessageW(dlg, IDC_MODE, CB_GETCURSEL, 0, 0) == 1;
+                d->action->settings = BrowserSettings{host, port, https};
             }
             EndDialog(dlg, IDOK);
         } else if (LOWORD(wp) == IDCANCEL) {

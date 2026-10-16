@@ -123,6 +123,7 @@ bool ConfigFromJson(const json::Value& o, Ipv4Config& c, std::wstring* err) {
     c.autoDns = c.dhcp && o["autoDns"].AsBool(true);
     for (const auto& e : o["addresses"].Items()) {
         IpEntry ip{WStr(e["ip"]), e["prefix"].AsInt(24)};
+        if (ip::IsLinkLocal(ip.ip)) continue;  // older presets could contain the APIPA address
         if (!ip::ParseIpv4(ip.ip) || ip.prefix < 1 || ip.prefix > 32) {
             if (err) *err = L"invalid address '" + ip.ip + L"'";
             return false;
@@ -175,6 +176,11 @@ json::Value HostsToJson(const std::vector<HostEntry>& hosts) {
                 j.Set("host", Str(v->host));
                 j.Set("port", v->port);
                 j.Set("password", Protect(v->password));
+            } else if (auto* b = std::get_if<BrowserSettings>(&a.settings)) {
+                j.Set("type", "browser");
+                j.Set("host", Str(b->host));
+                j.Set("port", b->port);
+                j.Set("https", b->https);
             }
             acts.Push(std::move(j));
         }
@@ -213,6 +219,12 @@ std::vector<HostEntry> HostsFromJson(const json::Value& arr) {
                 v.port = j["port"].AsInt(5900);
                 v.password = Unprotect(j["password"].AsString());
                 a.settings = v;
+            } else if (type == "browser") {
+                BrowserSettings b;
+                b.host = WStr(j["host"]);
+                b.https = j["https"].AsBool(false);
+                b.port = j["port"].AsInt(b.https ? 443 : 80);
+                a.settings = b;
             } else {
                 continue;
             }
@@ -274,10 +286,11 @@ bool PresetsFromJson(const std::string& utf8, std::vector<Preset>& out, std::wst
 
 AppSettings Load() {
     AppSettings s;
-    s.pingCycleMs = std::clamp<DWORD>(ReadDword(L"PingCycleMs", 1000), kMinPingCycleMs, kMaxPingCycleMs);
+    s.pingCycleMs = std::clamp<DWORD>(ReadDword(L"PingCycleMs", 5000), kMinPingCycleMs, kMaxPingCycleMs);
     s.windowX = (int)ReadDword(L"WindowX", (DWORD)INT_MIN);
     s.windowY = (int)ReadDword(L"WindowY", (DWORD)INT_MIN);
     s.alwaysOnTop = ReadDword(L"AlwaysOnTop", 0) != 0;
+    s.minimizeToTray = ReadDword(L"MinimizeToTray", 1) != 0;
 
     json::Value hosts;
     if (json::Parse(WideToUtf8(ReadString(L"Hosts")), hosts) && hosts.IsArray()) s.hosts = HostsFromJson(hosts);
@@ -291,6 +304,7 @@ void SaveGeneral(const AppSettings& s) {
         WriteDword(key, L"WindowX", (DWORD)s.windowX);
         WriteDword(key, L"WindowY", (DWORD)s.windowY);
         WriteDword(key, L"AlwaysOnTop", s.alwaysOnTop ? 1 : 0);
+        WriteDword(key, L"MinimizeToTray", s.minimizeToTray ? 1 : 0);
         RegCloseKey(key);
     }
 }

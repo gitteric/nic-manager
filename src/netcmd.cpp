@@ -21,6 +21,23 @@ std::wstring SystemExe(const wchar_t* name) {
 
 std::wstring Quote(const std::wstring& s) { return L"\"" + s + L"\""; }
 
+// One readable sentence for a failed command: netsh and ipconfig put the
+// reason in the first non-empty output line.
+std::wstring Reason(const std::wstring& exe, const ProcessResult& r, const std::wstring& out, DWORD budget) {
+    std::wstring prog = exe.substr(exe.find_last_of(L'\\') + 1);
+    if (!r.started) return L"Could not start " + prog + L".";
+    if (r.timedOut) return prog + L" did not finish within " + FormatMs(budget) + L".";
+    size_t pos = 0;
+    while (pos < out.size()) {
+        size_t end = out.find_first_of(L"\r\n", pos);
+        std::wstring ln = Trim(out.substr(pos, end == std::wstring::npos ? std::wstring::npos : end - pos));
+        if (!ln.empty()) return ln;
+        if (end == std::wstring::npos) break;
+        pos = end + 1;
+    }
+    return prog + L" failed with exit code " + std::to_wstring(r.exitCode) + L".";
+}
+
 // Runs one command, appends it to the job log, and records failure.
 bool Step(JobResult& job, const std::wstring& exe, const std::wstring& args, const Deadline& dl,
           bool ignoreFailure = false) {
@@ -29,6 +46,7 @@ bool Step(JobResult& job, const std::wstring& exe, const std::wstring& args, con
     if (budget == 0) {
         job.ok = false;
         job.log += line + L"skipped: overall timeout reached\r\n";
+        if (job.error.empty()) job.error = L"Gave up: the overall time limit was reached.";
         return false;
     }
     ProcessResult r = RunProcess(exe, args, budget);
@@ -39,7 +57,10 @@ bool Step(JobResult& job, const std::wstring& exe, const std::wstring& args, con
         if (!out.empty()) job.log += out + L"\r\n";
         if (!r.started) job.log += L"could not start process\r\n";
         if (r.timedOut) job.log += L"timed out after " + FormatMs(budget) + L"\r\n";
-        if (!ok) job.ok = false;
+        if (!ok) {
+            job.ok = false;
+            if (job.error.empty()) job.error = Reason(exe, r, out, budget);
+        }
     }
     return ok;
 }
@@ -112,13 +133,19 @@ JobResult SetAdapterEnabled(const std::wstring& name, bool enable, const Deadlin
     return job;
 }
 
-JobResult ApplyIpv4(const std::wstring& name, const Ipv4Config& prev, const Ipv4Config& next, const Deadline& dl) {
+JobResult ApplyIpv4(const std::wstring& name, const Ipv4Config& prev, const Ipv4Config& requested,
+                    const Deadline& dl) {
     JobResult job;
     const std::wstring n = Quote(name);
 
+    // Link-local (APIPA) addresses are assigned by Windows itself; never configure them.
+    Ipv4Config next = requested;
+    next.addresses.erase(std::remove_if(next.addresses.begin(), next.addresses.end(),
+                                        [](const IpEntry& e) { return ip::IsLinkLocal(e.ip); }),
+                         next.addresses.end());
     if (!next.dhcp && next.addresses.empty()) {
         job.ok = false;
-        job.log = L"A static configuration needs at least one IP address.";
+        job.error = job.log = L"A static configuration needs at least one IP address.";
         return job;
     }
 
@@ -172,6 +199,12 @@ JobResult RenewDhcp(const std::wstring& name, const Deadline& dl) {
 
 void OpenNetworkConnections() {
     ShellExecuteW(nullptr, L"open", SystemExe(L"control.exe").c_str(), L"ncpa.cpl", nullptr, SW_SHOWNORMAL);
+}
+
+void OpenWifiPicker() {
+    // The taskbar network flyout; the Wi-Fi settings page if the URI is unknown.
+    if ((INT_PTR)ShellExecuteW(nullptr, L"open", L"ms-availablenetworks:", nullptr, nullptr, SW_SHOWNORMAL) <= 32)
+        ShellExecuteW(nullptr, L"open", L"ms-settings:network-wifi", nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 bool IsElevated() {
