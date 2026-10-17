@@ -52,7 +52,8 @@ add_executable(NicManager WIN32
 target_include_directories(NicManager PRIVATE src res)
 target_compile_definitions(NicManager PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
-    _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A000000)
+    _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A000000
+    NICMGR_VERSION_WSTR=L"${PROJECT_VERSION}")
 
 # All system libraries that ship with Windows; no third-party dependencies.
 target_link_libraries(NicManager PRIVATE

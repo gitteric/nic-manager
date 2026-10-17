@@ -335,6 +335,13 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         break;
     case WM_MOUSEMOVE: OnMouseMove({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}); return 0;
+    case WM_NCMOUSEMOVE:
+        if (wp == HTCAPTION) OnTitleMouseMove({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+        break;
+    case WM_NCMOUSELEAVE:
+        m_trackingNc = false;
+        SetTip(L"");
+        return 0;
     case WM_MOUSELEAVE:
         m_trackingMouse = false;
         m_hover = {};
@@ -1015,15 +1022,34 @@ void MainWindow::OnMouseMove(POINT pt) {
     if (h.fixed >= 0) tip = m_fixed[h.fixed].tip;
     else if (h.row >= 0 && h.button >= 0) tip = m_rows[h.row].buttons[h.button].tip;
     else if (h.row >= 0 && !h.toggle) tip = m_rows[h.row].tip;
-    if (tip != m_tipText) {
-        m_tipText = tip;
-        TOOLINFOW ti{sizeof(ti)};
-        ti.hwnd = m_hwnd;
-        ti.uId = reinterpret_cast<UINT_PTR>(m_hwnd);
-        ti.lpszText = const_cast<wchar_t*>(m_tipText.c_str());
-        SendMessageW(m_tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&ti));
-        if (m_tipText.empty()) SendMessageW(m_tooltip, TTM_POP, 0, 0);
+    SetTip(tip);
+}
+
+void MainWindow::SetTip(const std::wstring& tip) {
+    if (tip == m_tipText) return;
+    m_tipText = tip;
+    TOOLINFOW ti{sizeof(ti)};
+    ti.hwnd = m_hwnd;
+    ti.uId = reinterpret_cast<UINT_PTR>(m_hwnd);
+    ti.lpszText = const_cast<wchar_t*>(m_tipText.c_str());
+    SendMessageW(m_tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&ti));
+    if (m_tipText.empty()) SendMessageW(m_tooltip, TTM_POP, 0, 0);
+}
+
+// The title strip is HTCAPTION (for dragging), so moves there arrive as
+// non-client messages that the subclassed tooltip never sees. Relay them as
+// client moves so the version tip shows like any other.
+void MainWindow::OnTitleMouseMove(POINT screenPt) {
+    if (!m_trackingNc) {
+        TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE | TME_NONCLIENT, m_hwnd, 0};
+        TrackMouseEvent(&tme);
+        m_trackingNc = true;
     }
+    SetTip(L"NIC Manager " NICMGR_VERSION_WSTR);
+    POINT pt = screenPt;
+    ScreenToClient(m_hwnd, &pt);
+    MSG m{m_hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(pt.x, pt.y), static_cast<DWORD>(GetMessageTime()), screenPt};
+    SendMessageW(m_tooltip, TTM_RELAYEVENT, 0, reinterpret_cast<LPARAM>(&m));
 }
 
 void MainWindow::OnLButtonDown(POINT pt, bool dbl) {

@@ -1,5 +1,7 @@
 # NIC Manager
 
+> This app was coded with Claude Opus (Anthropic) in Claude Code.
+
 A small, fast tray tool for Windows 10/11 that switches network adapter IPv4
 settings, keeps IPv4 presets, watches a list of hosts with ping and connects to
 them with RDP, SSH, VNC or the browser in one click. Optionally it scans a

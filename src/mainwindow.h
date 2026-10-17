@@ -127,6 +127,8 @@ private:
     // input
     Hit HitTest(POINT pt) const;
     void OnMouseMove(POINT pt);
+    void OnTitleMouseMove(POINT screenPt);
+    void SetTip(const std::wstring& tip);
     void OnLButtonDown(POINT pt, bool dbl);
     void OnLButtonUp(POINT pt);
     void OnRButtonUp(POINT pt);
@@ -201,6 +203,7 @@ private:
     int m_layoutY = 0, m_contentH = 0, m_scroll = 0;
     Hit m_hover, m_press;
     bool m_trackingMouse = false;
+    bool m_trackingNc = false;   // TME_NONCLIENT tracking over the title strip
     bool m_dragScroll = false;
     int m_dragStartY = 0, m_dragStartScroll = 0;
     std::wstring m_tipText;
