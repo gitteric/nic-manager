@@ -297,6 +297,8 @@ AppSettings Load() {
     s.alwaysOnTop = ReadDword(L"AlwaysOnTop", 0) != 0;
     s.minimizeToTray = ReadDword(L"MinimizeToTray", 1) != 0;
     s.tightVncPath = ReadString(L"TightVncPath");
+    s.nmapEnabled = ReadDword(L"NmapEnabled", 0) != 0;
+    s.nmapPath = ReadString(L"NmapPath");
 
     json::Value hosts;
     if (json::Parse(WideToUtf8(ReadString(L"Hosts")), hosts) && hosts.IsArray()) s.hosts = HostsFromJson(hosts);
@@ -311,8 +313,10 @@ void SaveGeneral(const AppSettings& s) {
         WriteDword(key, L"WindowY", (DWORD)s.windowY);
         WriteDword(key, L"AlwaysOnTop", s.alwaysOnTop ? 1 : 0);
         WriteDword(key, L"MinimizeToTray", s.minimizeToTray ? 1 : 0);
+        WriteDword(key, L"NmapEnabled", s.nmapEnabled ? 1 : 0);
         RegCloseKey(key);
     }
+    WriteString(L"NmapPath", s.nmapPath);
 }
 
 void SaveHosts(const std::vector<HostEntry>& hosts) {

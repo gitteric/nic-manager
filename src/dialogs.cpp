@@ -364,8 +364,8 @@ void FillPresetList(HWND dlg, const std::vector<Preset>& presets) {
     for (const auto& p : presets) SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)PresetSummary(p).c_str());
 }
 
-std::vector<int> SelectedIndices(HWND dlg) {
-    HWND list = GetDlgItem(dlg, IDC_PRESET_LIST);
+std::vector<int> SelectedIndices(HWND dlg, int id = IDC_PRESET_LIST) {
+    HWND list = GetDlgItem(dlg, id);
     int n = (int)SendMessageW(list, LB_GETSELCOUNT, 0, 0);
     std::vector<int> idx(std::max(n, 0));
     if (n > 0) SendMessageW(list, LB_GETSELITEMS, n, (LPARAM)idx.data());
@@ -465,7 +465,110 @@ INT_PTR CALLBACK PresetsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     return DarkColors(msg, wp);
 }
 
+// ---- result list --------------------------------------------------------
+
+struct ListData {
+    std::wstring caption, summary;
+    const std::vector<std::vector<std::wstring>>* rows;
+    AddRows addRows;
+};
+
+void UpdateListButtons(HWND dlg, const ListData& d) {
+    EnableWindow(GetDlgItem(dlg, IDC_ADD_SELECTED), !SelectedIndices(dlg, IDC_SCAN_LIST).empty());
+    EnableWindow(GetDlgItem(dlg, IDC_ADD_ALL), !d.rows->empty());
+}
+
+std::wstring RowText(const std::vector<std::wstring>& cells) {
+    std::wstring line;
+    for (size_t i = 0; i < cells.size(); ++i) line += (i ? L"\t" : L"") + cells[i];
+    return line;
+}
+
+INT_PTR CALLBACK ListProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* d = reinterpret_cast<ListData*>(GetWindowLongPtrW(dlg, DWLP_USER));
+    switch (msg) {
+    case WM_INITDIALOG: {
+        d = reinterpret_cast<ListData*>(lp);
+        SetWindowLongPtrW(dlg, DWLP_USER, lp);
+        SetWindowTextW(dlg, d->caption.c_str());
+        SetDlgItemTextW(dlg, IDC_SCAN_SUMMARY, d->summary.c_str());
+        HWND list = GetDlgItem(dlg, IDC_SCAN_LIST);
+        int stops[] = {64, 150, 214};  // dialog units: address | name | MAC | vendor
+        SendMessageW(list, LB_SETTABSTOPS, 3, (LPARAM)stops);
+        for (const auto& r : *d->rows) SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)RowText(r).c_str());
+        EnableWindow(GetDlgItem(dlg, IDC_COPY), !d->rows->empty());
+        if (!d->addRows) {
+            ShowWindow(GetDlgItem(dlg, IDC_ADD_SELECTED), SW_HIDE);
+            ShowWindow(GetDlgItem(dlg, IDC_ADD_ALL), SW_HIDE);
+        }
+        UpdateListButtons(dlg, *d);
+        InitDark(dlg);
+        return TRUE;
+    }
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDC_COPY) {
+            std::vector<int> sel = SelectedIndices(dlg, IDC_SCAN_LIST);
+            std::wstring text;
+            for (int i = 0; i < (int)d->rows->size(); ++i)
+                if (sel.empty() || std::find(sel.begin(), sel.end(), i) != sel.end())
+                    text += RowText((*d->rows)[i]) + L"\r\n";
+            if (OpenClipboard(dlg)) {
+                EmptyClipboard();
+                size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+                if (HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+                    memcpy(GlobalLock(mem), text.c_str(), bytes);
+                    GlobalUnlock(mem);
+                    if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
+                }
+                CloseClipboard();
+            }
+            SetDlgItemTextW(dlg, IDC_COPY, sel.empty() ? L"Copied all" : L"Copied");
+            SetFocus(GetDlgItem(dlg, IDC_SCAN_LIST));
+        } else if ((LOWORD(wp) == IDC_ADD_SELECTED || LOWORD(wp) == IDC_ADD_ALL) && d->addRows) {
+            std::vector<int> pick = SelectedIndices(dlg, IDC_SCAN_LIST);
+            if (LOWORD(wp) == IDC_ADD_ALL) {
+                pick.clear();
+                for (int i = 0; i < (int)d->rows->size(); ++i) pick.push_back(i);
+            }
+            int added = d->addRows(pick);
+            int skipped = (int)pick.size() - added;
+            std::wstring msg = std::to_wstring(added) + (added == 1 ? L" host" : L" hosts") + L" added to the ping list";
+            if (skipped > 0) msg += L", " + std::to_wstring(skipped) + L" already listed";
+            SetDlgItemTextW(dlg, IDC_SCAN_SUMMARY, msg.c_str());
+            SetFocus(GetDlgItem(dlg, IDC_SCAN_LIST));
+        } else if (LOWORD(wp) == IDC_SCAN_LIST && HIWORD(wp) == LBN_SELCHANGE) {
+            UpdateListButtons(dlg, *d);
+            SetDlgItemTextW(dlg, IDC_COPY, L"Copy");
+        } else if (LOWORD(wp) == IDCANCEL || LOWORD(wp) == IDOK) {
+            EndDialog(dlg, IDCANCEL);
+        }
+        return TRUE;
+    }
+    return DarkColors(msg, wp);
+}
+
 }  // namespace
+
+bool PickProgram(HWND owner, const wchar_t* title, const wchar_t* filter, std::wstring& path) {
+    wchar_t buf[MAX_PATH] = {};
+    wcsncpy_s(buf, path.c_str(), _TRUNCATE);
+    OPENFILENAMEW ofn{sizeof(ofn)};
+    ofn.hwndOwner = owner;
+    ofn.lpstrTitle = title;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = buf;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) return false;
+    path = buf;
+    return true;
+}
+
+void ShowList(HWND owner, const std::wstring& caption, const std::wstring& summary,
+              const std::vector<std::vector<std::wstring>>& rows, AddRows addRows) {
+    ListData d{caption, summary, &rows, std::move(addRows)};
+    DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_SCANRESULT), owner, ListProc, (LPARAM)&d);
+}
 
 void ApplyDarkFrame(HWND hwnd) {
     BOOL dark = TRUE;

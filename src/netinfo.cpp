@@ -277,7 +277,14 @@ void AdapterMonitor::Stop() {
     m_notifyIf = m_notifyAddr = m_notifyRoute = nullptr;
     m_stop = true;
     if (m_wake) SetEvent(m_wake);
-    if (m_thread.joinable()) m_thread.join();
+    if (!m_thread.joinable()) return;
+    // An adapter query can hang on a misbehaving driver; never block exit on it.
+    for (int i = 0; i < 200 && !m_done; ++i) Sleep(10);
+    if (!m_done) {
+        m_thread.detach();  // keeps using m_wake: leave it open
+        return;
+    }
+    m_thread.join();
     if (m_wake) CloseHandle(m_wake);
     m_wake = nullptr;
 }
@@ -299,6 +306,7 @@ void AdapterMonitor::Run() {
             ResetEvent(m_wake);
         }
     }
+    m_done = true;
 }
 
 }  // namespace netinfo

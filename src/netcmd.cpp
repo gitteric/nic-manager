@@ -71,7 +71,25 @@ bool Netsh(JobResult& job, const std::wstring& args, const Deadline& dl, bool ig
 
 }  // namespace
 
-ProcessResult RunProcess(const std::wstring& exe, const std::wstring& args, DWORD timeoutMs) {
+namespace {
+// Child processes go into a job that Windows kills when NIC Manager exits
+// (the handle closes with the process), so nmap or netsh never outlive it.
+HANDLE ChildJob() {
+    static HANDLE job = [] {
+        HANDLE j = CreateJobObjectW(nullptr, nullptr);
+        if (j) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(j, JobObjectExtendedLimitInformation, &info, sizeof(info));
+        }
+        return j;
+    }();
+    return job;
+}
+}  // namespace
+
+ProcessResult RunProcess(const std::wstring& exe, const std::wstring& args, DWORD timeoutMs,
+                         const std::atomic<bool>* cancel) {
     ProcessResult result;
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE readPipe = nullptr, writePipe = nullptr;
@@ -86,8 +104,12 @@ ProcessResult RunProcess(const std::wstring& exe, const std::wstring& args, DWOR
     si.hStdInput = nullptr;
     PROCESS_INFORMATION pi{};
     std::wstring cmdline = Quote(exe) + L" " + args;
-    result.started = CreateProcessW(exe.c_str(), cmdline.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
-                                    nullptr, nullptr, &si, &pi) != FALSE;
+    result.started = CreateProcessW(exe.c_str(), cmdline.data(), nullptr, nullptr, TRUE,
+                                    CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &si, &pi) != FALSE;
+    if (result.started) {
+        if (HANDLE job = ChildJob()) AssignProcessToJobObject(job, pi.hProcess);
+        ResumeThread(pi.hThread);
+    }
     CloseHandle(writePipe);
     if (!result.started) {
         CloseHandle(readPipe);
@@ -109,7 +131,7 @@ ProcessResult RunProcess(const std::wstring& exe, const std::wstring& args, DWOR
         drain();
         DWORD w = WaitForSingleObject(pi.hProcess, 25);
         if (w == WAIT_OBJECT_0) break;
-        if (GetTickCount64() >= end) {
+        if (GetTickCount64() >= end || (cancel && *cancel)) {
             TerminateProcess(pi.hProcess, 1);
             WaitForSingleObject(pi.hProcess, 1000);
             result.timedOut = true;

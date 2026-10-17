@@ -140,6 +140,7 @@ doing more.
 - **UI thread:** layout, painting and input. It never blocks.
 - **Adapter monitor:** one thread. It wakes on IP interface, address and route change notifications, and polls every 2 s to catch enable/disable and cable changes. It posts a new snapshot only when something changed, and posts nothing while you are editing a field, so rows don't move under the cursor.
 - **Pinger:** one thread per host. Each one resolves the name (cached for 30 s), sends `IcmpSendEcho` with a 1 s timeout, posts the result, then waits for the ping cycle. A down host never delays the others.
+- **Exit:** after the message loop, `main` ends the process with `TerminateProcess`, so no worker thread (job, ping, DNS lookup, adapter query) can keep it alive. Child processes started by `RunProcess` (netsh, ipconfig, nmap) sit in a kill-on-close job object and die with it. Clients started by actions (mstsc, ssh, VNC, browser) are not in that job and stay open.
 - **Command job:** one worker at a time. While it runs, the spinner shows and other commands are refused. A single netsh/ipconfig call is killed after 20 s, and a whole job after 60 s.
 
 ### How changes are applied
@@ -177,6 +178,8 @@ Behaviour I chose where your list left it open:
 | `AlwaysOnTop` | DWORD | 0/1 |
 | `TightVncPath` | SZ | tvnviewer.exe path, edited in the VNC action dialog |
 | `MinimizeToTray` | DWORD | 1 (default): tray only, minimize hides; 0: taskbar button too |
+| `NmapEnabled` | DWORD | 0/1, subnet scans in the IP address context menu |
+| `NmapPath` | SZ | nmap.exe path (found on PATH or in `Program Files\Nmap`, else picked) |
 | `Hosts` | SZ | JSON: hosts (name, address) and their actions, which connect to the host address; passwords DPAPI-encrypted (`"dpapi:…"`) |
 | `Presets` | SZ | JSON, the same format as the export file |
 
@@ -196,9 +199,28 @@ Preset export file:
 
 Import validates every address and replaces presets that have the same name.
 
-### Action hulls
+### nmap subnet scans
 
-`src/actions.cpp` has `ConnectRdp(owner, RdpSettings)`, `ConnectPutty(owner, PuttySettings)` and `ConnectTightVnc(owner, VncSettings)`. Each one receives the stored settings and currently shows a "stub" message. The comments in each sketch the launch command (`mstsc /v: /f` with `cmdkey`, `putty -ssh -P -pw`, `tvnviewer -host= -port= -password=`). The settings structs are in `src/model.h`.
+The tray item "nmap subnet scan" turns the feature on. It looks for nmap.exe on PATH and in `Program Files (x86)\Nmap` / `Program Files\Nmap`, and opens a file picker when it finds none. Each adapter IP address row then has a scan button (magnifier) that offers ARP, ping or a TCP port check of that address's subnet, limited to /24 or smaller (larger subnets show a hint instead).
+
+`src/nmap.cpp` probes every address with its own short nmap run, 16 at a time, one probe and no retries:
+
+| Scan | nmap arguments per address |
+|---|---|
+| ARP | `-sn -PR --max-retries 0 -T4 -oX - <ip>` |
+| Ping | `-sn -PE --disable-arp-ping --max-retries 0 -T4 -oX - <ip>` |
+| TCP port | `-sT -Pn -p <port> --max-retries 0 -T4 -oX - <ip>` |
+
+The bottom bar counts the addresses done ("37/254"). While a scan runs, its scan button turns into X, which stops it. Stopping, or the 3-minute limit, still opens the list with the hosts found so far. The XML gives hosts that are up (for TCP: with the port open), with MAC, vendor and reverse DNS name where nmap reports them, sorted by address. The list's "Add selected to ping list" and "Add all to ping list" buttons add hosts (name = reverse DNS name if any) and skip addresses already listed. ARP and ping need Npcap; when nmap warns about Npcap or raw sockets the scan fails with a hint, because nmap would otherwise fall back to TCP probes silently.
+
+### Actions
+
+`src/actions.cpp` starts the clients and returns at once:
+
+- **RDP:** writes `%TEMP%\NicManager\<host>.rdp` (UTF-16, only clipboard redirection, password as a DPAPI blob in `password 51:b:`), starts `mstsc` with it and deletes the file after 30 s.
+- **SSH:** opens a console with Windows OpenSSH (`ssh -p <port> user@host`). The password reaches ssh through `SSH_ASKPASS`, which points to NIC Manager itself (OpenSSH 8.4 or later).
+- **VNC:** `tvnviewer -host= -port= -password=` with the TightVNC path from the settings.
+- **Browser:** the URL in the default browser (`http://` is added when no scheme is given).
 
 ### Source map
 
@@ -213,6 +235,7 @@ Import validates every address and replaces presets that have the same name.
 | `src/dialogs.*` | action editor, preset manager, text prompt |
 | `src/ipaddr.*`, `src/json.*` | validation and JSON |
 | `src/actions.*` | RDP (temp .rdp + mstsc), SSH (Windows OpenSSH + askpass), TightVNC, Browser |
+| `src/nmap.*` | nmap subnet scans (ARP, ping, TCP port) and XML parsing |
 | `src/theme.h`, `src/model.h` | colours, data types |
 | `res/` | dialog templates, manifest (elevation, DPI, common controls v6) |
 

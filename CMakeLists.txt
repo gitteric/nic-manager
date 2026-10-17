@@ -46,6 +46,7 @@ add_executable(NicManager WIN32
     src/actions.cpp
     src/cert.cpp
     src/starttask.cpp
+    src/nmap.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/app.rc
 )
 target_include_directories(NicManager PRIVATE src res)

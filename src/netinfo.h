@@ -28,7 +28,7 @@ public:
     ~AdapterMonitor() { Stop(); }
     void Start(HWND hwnd, UINT msg, bool demo = false);
     void Trigger();  // force a refresh + post
-    void Stop();
+    void Stop();  // waits at most ~2 s for the thread
 
 private:
     void Run();
@@ -38,6 +38,7 @@ private:
     HANDLE m_wake = nullptr;
     std::atomic<bool> m_stop{false};
     std::atomic<bool> m_force{true};
+    std::atomic<bool> m_done{false};  // Run() returned
     bool m_demo = false;
     std::thread m_thread;
     HANDLE m_notifyIf = nullptr, m_notifyAddr = nullptr, m_notifyRoute = nullptr;

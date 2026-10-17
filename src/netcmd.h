@@ -5,6 +5,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <string>
 
 #include "model.h"
@@ -32,8 +33,10 @@ struct ProcessResult {
     std::wstring output;  // stdout + stderr
 };
 
-// Runs a console program without a window and captures its output.
-ProcessResult RunProcess(const std::wstring& exe, const std::wstring& args, DWORD timeoutMs);
+// Runs a console program without a window and captures its output. Setting
+// *cancel ends the program early (reported like a timeout).
+ProcessResult RunProcess(const std::wstring& exe, const std::wstring& args, DWORD timeoutMs,
+                         const std::atomic<bool>* cancel = nullptr);
 
 struct JobResult {
     bool ok = true;

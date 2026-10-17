@@ -7,6 +7,7 @@
 #define IDR_SIGNING_CERT  110
 #define IDI_APP           1
 #define IDD_STARTTASK     105
+#define IDD_SCANRESULT    106
 #define IDC_AUTOSTART     1040
 #define IDC_SHORTCUT      1041
 
@@ -37,3 +38,9 @@
 #ifndef IDC_STATIC
 #define IDC_STATIC        (-1)
 #endif
+
+#define IDC_SCAN_SUMMARY  1042
+#define IDC_SCAN_LIST     1043
+#define IDC_COPY          1044
+#define IDC_ADD_SELECTED  1045
+#define IDC_ADD_ALL       1046

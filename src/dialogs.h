@@ -32,6 +32,17 @@ bool EditAction(HWND owner, HostAction& action, const std::wstring& hostAddress,
 // List with delete / export / import. Returns true if `presets` changed.
 bool ManagePresets(HWND owner, std::vector<Preset>& presets);
 
+// Open-file picker for a program; `path` is the initial and the chosen file.
+bool PickProgram(HWND owner, const wchar_t* title, const wchar_t* filter, std::wstring& path);
+
+// Read-only result list: one row per entry, cells shown in tab-aligned
+// columns. Copy puts the selected rows (or all) on the clipboard. With
+// `addRows`, two buttons hand the selected or all row indices to it; it
+// returns how many were added.
+using AddRows = std::function<int(const std::vector<int>& rows)>;
+void ShowList(HWND owner, const std::wstring& caption, const std::wstring& summary,
+              const std::vector<std::vector<std::wstring>>& rows, AddRows addRows = {});
+
 // Dark title bar + dark control themes for any top-level window.
 void ApplyDarkFrame(HWND hwnd);
 

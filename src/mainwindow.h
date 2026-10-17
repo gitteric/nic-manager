@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
@@ -13,8 +14,17 @@
 #include "model.h"
 #include "netcmd.h"
 #include "netinfo.h"
+#include "nmap.h"
 #include "pinger.h"
 #include "settings.h"
+
+// How MainWindow::RunJob runs a background job.
+struct JobOptions {
+    DWORD timeoutMs = 60000;     // whole job; single netsh calls are capped at 20 s
+    bool adminHint = true;       // failure text mentions missing elevation
+    bool simulateInDemo = true;  // --demo: replace fn with a short sleep
+    std::function<void()> onSuccess;  // UI thread, after a successful job
+};
 
 class MainWindow {
 public:
@@ -31,7 +41,7 @@ private:
         ToggleEnabled, ToggleDhcp, ToggleAutoDns,
         EditAddr, DelAddr, AddAddr, EditGw, DelGw, AddGw, EditDns, DelDns, AddDns,
         AddHost, EditHost, DelHost, AddAction, RunAction, EditAction, DelAction,
-        OpenNcpa, OpenWifi, FlushDns, RenewDhcp, Hide, Exit, Minimize,
+        OpenNcpa, OpenWifi, FlushDns, RenewDhcp, Hide, Exit, Minimize, ScanSubnet, StopScan,
     };
     enum class EditKind { None, Address, NewAddress, Gateway, NewGateway, Dns, NewDns, Host, NewHost };
     enum class RowKind { Header, Adapter, Toggle, Caption, Value, Host, Action, Hint };
@@ -132,7 +142,8 @@ private:
 
     // operations
     void ApplyConfig(const Adapter& a, const Ipv4Config& cfg);
-    void RunJob(const std::wstring& label, std::function<netcmd::JobResult(const netcmd::Deadline&)> fn);
+    void RunJob(const std::wstring& label, std::function<netcmd::JobResult(const netcmd::Deadline&)> fn,
+                JobOptions opts = {});
     void OnJobDone(netcmd::JobResult* result);
     void OnAdapters(std::vector<Adapter>* list);
     void OnPing(uint32_t id, ping::State state, int rtt);
@@ -155,6 +166,11 @@ private:
     void RemoveStartTask();
     void ApplyTaskbarMode();  // taskbar button only while not minimizing to tray
     void OpenPresetEditor();
+    void ToggleNmap();
+    bool SelectNmap();
+    void ShowScanMenu(Adapter a, int index);  // copy: the list may refresh during the prompt
+    void StartScan(const Adapter& a, int index, nmap::Kind kind, uint32_t network, int prefix, int port);
+    void OnScanProgress(int done, int total);
 
     std::wstring AdapterSummary(const Adapter& a) const;
     std::wstring AdapterTip(const Adapter& a) const;
@@ -194,7 +210,14 @@ private:
     int m_editGen = 0;
 
     bool m_busy = false;
-    std::wstring m_busyLabel;
+    std::wstring m_busyLabel;  // bottom bar text while busy
+    std::wstring m_busyBase;   // the job's name, for progress and errors
+    JobOptions m_jobOpts;
+    // Running subnet scan: the address row shows a stop button.
+    bool m_scanning = false;
+    std::wstring m_scanGuid;
+    int m_scanIndex = -1;
+    std::shared_ptr<std::atomic<bool>> m_scanCancel;
     int m_spin = 0;
     std::thread m_job;
     std::wstring m_status;

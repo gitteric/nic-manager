@@ -26,18 +26,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     WSAStartup(MAKEWORD(2, 2), &wsa);
 
     int code = 1;
-    {
-        MainWindow window;
-        if (window.Create(inst, demo, minimized)) {
-            MSG msg;
-            while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-            code = 0;
+    MainWindow window;
+    if (window.Create(inst, demo, minimized)) {
+        MSG msg;
+        while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
         }
+        code = 0;
     }
-    WSACleanup();
+    // The window is gone and settings are saved as they change. End the
+    // process here instead of waiting for worker threads (a running job, ping
+    // or DNS lookups): nothing may keep NIC Manager alive after Exit. Child
+    // processes (nmap, netsh) die with it through their job object.
     if (mutex) CloseHandle(mutex);
+    TerminateProcess(GetCurrentProcess(), (UINT)code);
     return code;
 }

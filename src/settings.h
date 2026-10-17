@@ -5,6 +5,8 @@
 //   AlwaysOnTop  REG_DWORD  0/1
 //   MinimizeToTray REG_DWORD 0/1 (1: no taskbar button, minimize hides to tray)
 //   TightVncPath REG_SZ   full path of tvnviewer.exe (edited in the VNC action dialog)
+//   NmapEnabled  REG_DWORD  0/1 (subnet scans in the IP address context menu)
+//   NmapPath     REG_SZ     full path of nmap.exe
 //   Hosts        REG_SZ     JSON array of hosts + actions (passwords DPAPI-encrypted)
 //   Presets      REG_SZ     JSON document of IPv4 presets (same format as export files)
 #pragma once
@@ -24,6 +26,8 @@ struct AppSettings {
     bool alwaysOnTop = false;
     bool minimizeToTray = true;
     std::wstring tightVncPath;
+    bool nmapEnabled = false;
+    std::wstring nmapPath;
     std::vector<HostEntry> hosts;
     std::vector<Preset> presets;
 };
@@ -34,7 +38,7 @@ constexpr DWORD kMinPingCycleMs = 1;
 constexpr DWORD kMaxPingCycleMs = 10000;
 
 AppSettings Load();
-void SaveGeneral(const AppSettings& s);  // cycle, window position, flags
+void SaveGeneral(const AppSettings& s);  // cycle, window position, flags, nmap
 void SaveHosts(const std::vector<HostEntry>& hosts);
 void SavePresets(const std::vector<Preset>& presets);
 void SaveTightVncPath(const std::wstring& path);

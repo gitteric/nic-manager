@@ -15,6 +15,7 @@
 #include "starttask.h"
 #include "dialogs.h"
 #include "ipaddr.h"
+#include "nmap.h"
 #include "strutil.h"
 #include "theme.h"
 
@@ -24,13 +25,13 @@ constexpr UINT WM_APP_TRAY = WM_APP + 1;
 constexpr UINT WM_APP_ADAPTERS = WM_APP + 2;
 constexpr UINT WM_APP_PING = WM_APP + 3;
 constexpr UINT WM_APP_JOBDONE = WM_APP + 4;
+constexpr UINT WM_APP_SCANPROGRESS = WM_APP + 6;  // wParam: done, lParam: total
 constexpr UINT WM_APP_EDITKEY = WM_APP + 5;  // wParam: 1 commit, 0 cancel; lParam: edit generation
 
 constexpr UINT_PTR kTimerSpin = 1;
 constexpr UINT_PTR kTimerStatus = 2;
 constexpr UINT_PTR kTimerToast = 3;
 constexpr UINT kToastMs = 5000;
-constexpr DWORD kJobTimeoutMs = 60000;  // whole job; single commands are capped at 20 s
 constexpr UINT kTrayId = 1;
 constexpr int kEditId = 100;
 
@@ -49,9 +50,11 @@ constexpr wchar_t kGlyphWifi = 0xE701;
 constexpr wchar_t kGlyphCopy = 0xE8C8;
 constexpr wchar_t kGlyphMinimize = 0xE921;
 constexpr wchar_t kGlyphError = 0xEA39;
+constexpr wchar_t kGlyphScan = 0xE721;  // magnifier
 
 enum : UINT {
     IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_CERT, IDM_TASK_SETUP, IDM_TASK_REMOVE, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
+    IDM_NMAP, IDM_NMAP_PATH, IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP,
     IDM_CYCLE_BASE = 200,
     IDM_APPLY_PRESET_BASE = 1000,
 };
@@ -380,6 +383,7 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_ADAPTERS: OnAdapters(reinterpret_cast<std::vector<Adapter>*>(lp)); return 0;
     case WM_APP_PING: OnPing((uint32_t)wp, (ping::State)LOWORD(lp), HIWORD(lp)); return 0;
     case WM_APP_JOBDONE: OnJobDone(reinterpret_cast<netcmd::JobResult*>(lp)); return 0;
+    case WM_APP_SCANPROGRESS: OnScanProgress((int)wp, (int)lp); return 0;
     case WM_APP_EDITKEY:
         if ((int)lp == m_editGen && m_edit) {
             if (wp) CommitEdit();
@@ -392,9 +396,10 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         nid.hWnd = m_hwnd;
         nid.uID = kTrayId;
         Shell_NotifyIconW(NIM_DELETE, &nid);
+        if (m_scanCancel) *m_scanCancel = true;  // ends running nmap probes
         m_pinger.StopAll();
         m_monitor.Stop();
-        if (m_job.joinable()) m_job.detach();  // process is exiting; the timeout bounds it anyway
+        if (m_job.joinable()) m_job.detach();  // main() ends the process right after the message loop
         DestroyFonts();
         PostQuitMessage(0);
         return 0;
@@ -588,9 +593,17 @@ void MainWindow::AddAdapterDetails(int ai) {
     }
 
     caption(L"IP address / subnet", isStatic, Cmd::AddAddr, L"Add IP address");
-    for (int k = 0; k < (int)c.addresses.size(); ++k)
+    for (int k = 0; k < (int)c.addresses.size(); ++k) {
         value(ip::Format(c.addresses[k]), k, EditKind::Address, isStatic, Cmd::EditAddr, isStatic && k > 0,
               Cmd::DelAddr);
+        if (m_settings.nmapEnabled) {
+            auto& b = m_rows.back().buttons;
+            if (m_scanning && m_scanGuid == a.guid && m_scanIndex == k)
+                b.insert(b.begin(), {kGlyphClose, Cmd::StopScan, L"Stop the scan (keeps the hosts found so far)"});
+            else
+                b.insert(b.begin(), {kGlyphScan, Cmd::ScanSubnet, L"Scan this subnet with nmap (ARP, ping or TCP port)"});
+        }
+    }
     newSlot(EditKind::NewAddress);
     if (!a.linkLocal.empty())  // assigned by Windows itself: shown, not editable
     {
@@ -1068,15 +1081,16 @@ void MainWindow::OnLButtonUp(POINT pt) {
 
 void MainWindow::OnRButtonUp(POINT pt) {
     Hit h = HitTest(pt);
-    if (h.row < 0 || m_rows[h.row].kind != RowKind::Adapter) return;
+    if (h.row < 0) return;
+    const Row& r = m_rows[h.row];
     POINT screen = pt;
     ClientToScreen(m_hwnd, &screen);
-    ShowAdapterMenu(m_rows[h.row].adapter, screen);
+    if (r.kind == RowKind::Adapter) ShowAdapterMenu(r.adapter, screen);
 }
 
 bool MainWindow::IsBlockedWhileBusy(Cmd cmd) const {
     return cmd != Cmd::ExpandAdapter && cmd != Cmd::ExpandHost && cmd != Cmd::Hide && cmd != Cmd::Exit &&
-           cmd != Cmd::Minimize && cmd != Cmd::OpenWifi && cmd != Cmd::OpenNcpa;
+           cmd != Cmd::Minimize && cmd != Cmd::OpenWifi && cmd != Cmd::OpenNcpa && cmd != Cmd::StopScan;
 }
 
 void MainWindow::Execute(const Row* rowp, Cmd cmd) {
@@ -1242,6 +1256,16 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
 
     case Cmd::OpenNcpa: netcmd::OpenNetworkConnections(); break;
     case Cmd::OpenWifi: netcmd::OpenWifiPicker(); break;
+    case Cmd::ScanSubnet:
+        if (a) ShowScanMenu(*a, idx);
+        break;
+    case Cmd::StopScan:
+        if (m_scanning && m_scanCancel) {
+            *m_scanCancel = true;
+            m_busyLabel = L"Stopping scan...";
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
+        break;
     case Cmd::FlushDns:
         RunJob(L"Flushing DNS cache", [](const netcmd::Deadline& dl) { return netcmd::FlushDns(dl); });
         break;
@@ -1438,24 +1462,28 @@ void MainWindow::ApplyConfig(const Adapter& a, const Ipv4Config& cfg) {
     });
 }
 
-void MainWindow::RunJob(const std::wstring& label, std::function<netcmd::JobResult(const netcmd::Deadline&)> fn) {
+void MainWindow::RunJob(const std::wstring& label, std::function<netcmd::JobResult(const netcmd::Deadline&)> fn,
+                        JobOptions opts) {
     if (m_busy) {
         MessageBeep(MB_OK);
         return;
     }
     if (m_job.joinable()) m_job.join();
     m_busy = true;
+    m_busyBase = label;
     m_busyLabel = label + L"...";
     m_status.clear();
     SetTimer(m_hwnd, kTimerSpin, 80, nullptr);
-    if (m_demo)
+    const DWORD timeoutMs = opts.timeoutMs;
+    if (m_demo && opts.simulateInDemo)
         fn = [](const netcmd::Deadline&) {  // simulate: show the busy state, change nothing
             Sleep(1500);
             return netcmd::JobResult{};
         };
     HWND hwnd = m_hwnd;
-    m_job = std::thread([hwnd, fn = std::move(fn)] {
-        auto result = std::make_unique<netcmd::JobResult>(fn(netcmd::Deadline::In(kJobTimeoutMs)));
+    m_jobOpts = std::move(opts);
+    m_job = std::thread([hwnd, timeoutMs, fn = std::move(fn)] {
+        auto result = std::make_unique<netcmd::JobResult>(fn(netcmd::Deadline::In(timeoutMs)));
         if (PostMessageW(hwnd, WM_APP_JOBDONE, 0, reinterpret_cast<LPARAM>(result.get()))) result.release();
     });
     InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -1467,14 +1495,21 @@ void MainWindow::OnJobDone(netcmd::JobResult* raw) {
     m_busy = false;
     KillTimer(m_hwnd, kTimerSpin);
     m_monitor.Trigger();
+    JobOptions opts = std::move(m_jobOpts);
+    m_jobOpts = {};
+    if (m_scanning) {
+        m_scanning = false;
+        m_scanCancel.reset();
+        Relayout();  // stop button back to scan button
+    }
     if (result->ok) {
         SetStatus(L"Done", theme::Green, 2500);
+        if (opts.onSuccess) opts.onSuccess();
     } else {
         SetStatus(L"Failed", theme::Red);
-        std::wstring what = m_busyLabel;
-        if (what.size() > 3 && what.compare(what.size() - 3, 3, L"...") == 0) what.resize(what.size() - 3);
+        const std::wstring& what = m_busyBase;
         std::wstring text = result->error.empty() ? L"The command failed." : result->error;
-        if (!m_elevated) text += L" NIC Manager is not running as administrator.";
+        if (!m_elevated && opts.adminHint) text += L" NIC Manager is not running as administrator.";
         ShowToast(what + L" failed", text, result->log);
     }
     InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -1693,6 +1728,9 @@ void MainWindow::ShowTrayMenu() {
     AppendMenuW(menu, MF_STRING | (m_startTask > 0 ? MF_CHECKED : 0), IDM_TASK_SETUP,
                 m_startTask > 0 ? L"Start without UAC prompt: change..." : L"Start without UAC prompt...");
     AppendMenuW(menu, MF_STRING | (m_startTask > 0 ? 0 : MF_GRAYED), IDM_TASK_REMOVE, L"Remove start without UAC prompt");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (m_settings.nmapEnabled ? MF_CHECKED : 0), IDM_NMAP, L"nmap subnet scan");
+    if (m_settings.nmapEnabled) AppendMenuW(menu, MF_STRING, IDM_NMAP_PATH, L"Select nmap.exe...");
     const bool certInstalled = cert::HasEmbedded() && cert::IsInstalled();
     if (cert::HasEmbedded())
         AppendMenuW(menu, MF_STRING | (certInstalled ? MF_CHECKED : 0), IDM_CERT, L"Trust signing certificate");
@@ -1728,6 +1766,10 @@ void MainWindow::ShowTrayMenu() {
         RemoveStartTask();
     } else if (id == IDM_CERT) {
         ToggleCertificate(certInstalled);
+    } else if (id == IDM_NMAP) {
+        ToggleNmap();
+    } else if (id == IDM_NMAP_PATH) {
+        SelectNmap();
     } else if (id == IDM_TO_TRAY) {
         m_settings.minimizeToTray = !m_settings.minimizeToTray;
         settings::SaveGeneral(m_settings);
@@ -1802,4 +1844,186 @@ void MainWindow::ShowAdapterMenu(int ai, POINT screen) {
     } else if (id >= IDM_APPLY_PRESET_BASE && id < IDM_APPLY_PRESET_BASE + m_settings.presets.size()) {
         ApplyConfig(a, m_settings.presets[id - IDM_APPLY_PRESET_BASE].cfg);
     }
+}
+
+// ---- nmap subnet scans --------------------------------------------------
+
+void MainWindow::ToggleNmap() {
+    if (m_settings.nmapEnabled) {
+        m_settings.nmapEnabled = false;
+        settings::SaveGeneral(m_settings);
+        return;
+    }
+    DWORD attr = GetFileAttributesW(m_settings.nmapPath.c_str());
+    if (m_settings.nmapPath.empty() || attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY))
+        m_settings.nmapPath = nmap::Find();
+    if (m_settings.nmapPath.empty()) {
+        MessageBoxW(m_hwnd, L"nmap.exe was not found on PATH or in the default install folder. Select it next.",
+                    L"NIC Manager", MB_OK | MB_ICONINFORMATION);
+        if (!SelectNmap()) return;  // stays disabled
+    }
+    m_settings.nmapEnabled = true;
+    settings::SaveGeneral(m_settings);
+    SetStatus(L"Right-click an IP address to scan its subnet", theme::TextDim, 5000);
+}
+
+bool MainWindow::SelectNmap() {
+    std::wstring path = m_settings.nmapPath;
+    if (!dialogs::PickProgram(m_hwnd, L"Select nmap.exe", L"nmap (nmap.exe)\0nmap.exe\0Programs (*.exe)\0*.exe\0", path))
+        return false;
+    m_settings.nmapPath = path;
+    settings::SaveGeneral(m_settings);
+    return true;
+}
+
+void MainWindow::ShowScanMenu(Adapter a, int index) {
+    if (index < 0 || index >= (int)a.cfg.addresses.size()) return;
+    const IpEntry entry = a.cfg.addresses[index];
+    uint32_t addr = 0;
+    if (!ip::ParseIpv4(entry.ip, &addr)) return;
+    const int prefix = entry.prefix;
+    const uint32_t mask = prefix <= 0 ? 0 : 0xFFFFFFFFu << (32 - prefix);
+    const uint32_t network = addr & mask;
+    const std::wstring target = ip::FormatIpv4(network) + L"/" + std::to_wstring(prefix);
+    const bool tooLarge = prefix < nmap::kMinPrefix;
+    const UINT state = tooLarge ? MF_GRAYED : 0;
+
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, (L"Scan " + target + L" with nmap").c_str());
+    if (tooLarge)
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0,
+                    (L"Subnet is larger than /24 (" + std::to_wstring(1ull << (32 - prefix)) + L" addresses); not scanned")
+                        .c_str());
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | state, IDM_SCAN_ARP, L"ARP scan");
+    AppendMenuW(menu, MF_STRING | state, IDM_SCAN_PING, L"Ping scan");
+    AppendMenuW(menu, MF_STRING | state, IDM_SCAN_TCP, L"TCP port...");
+    POINT pt;
+    GetCursorPos(&pt);
+    UINT id = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(menu);
+
+    if (id == IDM_SCAN_ARP) StartScan(a, index, nmap::Kind::Arp, network, prefix, 0);
+    else if (id == IDM_SCAN_PING) StartScan(a, index, nmap::Kind::Ping, network, prefix, 0);
+    else if (id == IDM_SCAN_TCP) {
+        static std::wstring lastPort = L"22";
+        auto text = dialogs::PromptText(m_hwnd, L"TCP port check", L"Hosts in " + target + L" with this TCP port open:",
+                                        lastPort, [](const std::wstring& s, std::wstring& err) {
+                                            bool digits = !s.empty() && s.size() <= 5 &&
+                                                          std::all_of(s.begin(), s.end(), iswdigit);
+                                            int v = digits ? _wtoi(s.c_str()) : 0;
+                                            if (v < 1 || v > 65535) {
+                                                err = L"Enter a port between 1 and 65535.";
+                                                return false;
+                                            }
+                                            return true;
+                                        });
+        if (!text) return;
+        lastPort = *text;
+        StartScan(a, index, nmap::Kind::Tcp, network, prefix, _wtoi(text->c_str()));
+    }
+}
+
+void MainWindow::StartScan(const Adapter& a, int index, nmap::Kind kind, uint32_t network, int prefix, int port) {
+    if (m_busy) {
+        MessageBeep(MB_OK);
+        return;
+    }
+    const std::wstring target = ip::FormatIpv4(network) + L"/" + std::to_wstring(prefix);
+    const std::wstring what =
+        kind == nmap::Kind::Tcp ? L"TCP port " + std::to_wstring(port) : std::wstring(nmap::KindName(kind));
+    auto result = std::make_shared<nmap::ScanResult>();
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    const std::wstring exe = m_settings.nmapPath;
+    const bool demo = m_demo;
+    const HWND hwnd = m_hwnd;
+
+    m_scanning = true;
+    m_scanGuid = a.guid;
+    m_scanIndex = index;
+    m_scanCancel = cancel;
+
+    JobOptions opts;
+    opts.timeoutMs = nmap::kScanTimeoutMs;
+    opts.adminHint = kind != nmap::Kind::Tcp;
+    opts.simulateInDemo = false;
+    opts.onSuccess = [this, result, kind, target, what, port] {
+        const auto& r = *result;
+        std::vector<std::vector<std::wstring>> rows;
+        for (const auto& h : r.hosts) rows.push_back({ip::FormatIpv4(h.ip), h.name, h.mac, h.vendor});
+        std::wstring summary = std::to_wstring(r.hosts.size()) + (r.hosts.size() == 1 ? L" host" : L" hosts") +
+                               L" in " + target +
+                               (kind == nmap::Kind::Tcp ? L" with TCP port " + std::to_wstring(port) + L" open"
+                                                        : L" answered the " + what + L" scan");
+        if (r.cancelled || r.timedOut)
+            summary += L" (" + std::wstring(r.cancelled ? L"stopped" : L"time limit reached") + L" after " +
+                       std::to_wstring(r.done) + L" of " + std::to_wstring(r.total) + L" addresses)";
+        SetStatus(r.cancelled ? L"Scan stopped" : L"Scan finished", theme::Green, 3000);
+        auto addToPingList = [this, result](const std::vector<int>& picks) {
+            int added = 0;
+            for (int i : picks) {
+                if (i < 0 || i >= (int)result->hosts.size()) continue;
+                const auto& h = result->hosts[i];
+                std::wstring address = ip::FormatIpv4(h.ip);
+                bool listed = std::any_of(m_settings.hosts.begin(), m_settings.hosts.end(), [&](const HostEntry& e) {
+                    return _wcsicmp(e.address.c_str(), address.c_str()) == 0 ||
+                           (!h.name.empty() && _wcsicmp(e.address.c_str(), h.name.c_str()) == 0);
+                });
+                if (listed) continue;
+                m_settings.hosts.push_back({h.name.empty() ? address : h.name, address, {}});
+                m_hostState.push_back({m_nextHostId++});
+                ++added;
+            }
+            if (added) {
+                settings::SaveHosts(m_settings.hosts);
+                SyncPinger();
+                Relayout();
+            }
+            return added;
+        };
+        dialogs::ShowList(m_hwnd, L"Subnet scan: " + target, summary, rows, addToPingList);
+    };
+    RunJob(L"Scanning " + target + L" (" + what + L")",
+           [=](const netcmd::Deadline& dl) {
+               auto progress = [hwnd](int done, int total) {
+                   PostMessageW(hwnd, WM_APP_SCANPROGRESS, (WPARAM)done, (LPARAM)total);
+               };
+               if (demo) {  // sample hosts, no nmap
+                   auto targets = nmap::Targets(network, prefix);
+                   result->total = (int)targets.size();
+                   for (uint32_t t : targets) {
+                       if (*cancel) {
+                           result->cancelled = true;
+                           break;
+                       }
+                       Sleep(25);
+                       uint32_t h = t - network;
+                       if (h == 1 || h == 7 || h == 23 || h == 50 || h == 101 || h == 254) {
+                           nmap::Host x;
+                           x.ip = t;
+                           if (kind == nmap::Kind::Arp) {
+                               wchar_t mac[18];
+                               swprintf_s(mac, L"3C:52:82:1F:%02X:%02X", (h * 37) & 0xFF, h & 0xFF);
+                               x.mac = mac;
+                               x.vendor = h == 1 ? L"AVM GmbH" : L"Hewlett Packard";
+                           }
+                           if (h == 1) x.name = L"fritz.box";
+                           if (kind != nmap::Kind::Tcp || h % 2 == 1) result->hosts.push_back(x);
+                       }
+                       progress(++result->done, result->total);
+                   }
+                   return netcmd::JobResult{};
+               }
+               return nmap::Scan(exe, kind, network, prefix, port, dl, *cancel, progress, *result);
+           },
+           std::move(opts));
+    Relayout();  // the scan button becomes a stop button
+}
+
+void MainWindow::OnScanProgress(int done, int total) {
+    if (!m_busy || !m_scanning) return;
+    if (m_scanCancel && *m_scanCancel) return;  // keeps "Stopping..."
+    // Count first: the bottom bar cuts the end of long labels.
+    m_busyLabel = std::to_wstring(done) + L"/" + std::to_wstring(total) + L"  " + m_busyBase;
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
