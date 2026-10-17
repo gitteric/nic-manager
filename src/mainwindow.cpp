@@ -134,6 +134,7 @@ bool MainWindow::Create(HINSTANCE inst, bool demo, bool minimized) {
     m_inst = inst;
     m_demo = demo;
     m_settings = settings::Load();
+    m_expandedAdapter = m_settings.expandedAdapter;  // dropped on the first adapter list if it is gone
     m_elevated = netcmd::IsElevated();
     for (size_t i = 0; i < m_settings.hosts.size(); ++i) m_hostState.push_back({m_nextHostId++});
 
@@ -1109,6 +1110,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
     case Cmd::ExpandAdapter:
         if (!a) break;
         m_expandedAdapter = m_expandedAdapter == a->guid ? L"" : a->guid;  // only one open at a time
+        settings::SaveExpandedAdapter(m_expandedAdapter);
         Relayout();
         for (int i = 0; i < (int)m_rows.size(); ++i)
             if (m_rows[i].kind == RowKind::Adapter && m_rows[i].adapter == row.adapter) {
@@ -1858,7 +1860,7 @@ void MainWindow::ToggleNmap() {
     if (m_settings.nmapPath.empty() || attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY))
         m_settings.nmapPath = nmap::Find();
     if (m_settings.nmapPath.empty()) {
-        MessageBoxW(m_hwnd, L"nmap.exe was not found on PATH or in the default install folder. Select it next.",
+        MessageBoxW(m_hwnd, L"nmap.exe was not found on PATH or in the default install folder. Install nmap adding it to PATH and/or select it next.",
                     L"NIC Manager", MB_OK | MB_ICONINFORMATION);
         if (!SelectNmap()) return;  // stays disabled
     }

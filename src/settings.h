@@ -5,6 +5,7 @@
 //   AlwaysOnTop  REG_DWORD  0/1
 //   MinimizeToTray REG_DWORD 0/1 (1: no taskbar button, minimize hides to tray)
 //   TightVncPath REG_SZ   full path of tvnviewer.exe (edited in the VNC action dialog)
+//   ExpandedAdapter REG_SZ  GUID of the adapter shown expanded (restored at start)
 //   NmapEnabled  REG_DWORD  0/1 (subnet scans in the IP address context menu)
 //   NmapPath     REG_SZ     full path of nmap.exe
 //   Hosts        REG_SZ     JSON array of hosts + actions (passwords DPAPI-encrypted)
@@ -26,6 +27,7 @@ struct AppSettings {
     bool alwaysOnTop = false;
     bool minimizeToTray = true;
     std::wstring tightVncPath;
+    std::wstring expandedAdapter;
     bool nmapEnabled = false;
     std::wstring nmapPath;
     std::vector<HostEntry> hosts;
@@ -42,6 +44,7 @@ void SaveGeneral(const AppSettings& s);  // cycle, window position, flags, nmap
 void SaveHosts(const std::vector<HostEntry>& hosts);
 void SavePresets(const std::vector<Preset>& presets);
 void SaveTightVncPath(const std::wstring& path);
+void SaveExpandedAdapter(const std::wstring& guid);  // empty: none
 
 // DPAPI for the current Windows user ("dpapi:<base64>"); empty on failure.
 std::string ProtectString(const std::wstring& plain);

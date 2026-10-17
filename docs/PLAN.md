@@ -178,7 +178,8 @@ Behaviour I chose where your list left it open:
 | `AlwaysOnTop` | DWORD | 0/1 |
 | `TightVncPath` | SZ | tvnviewer.exe path, edited in the VNC action dialog |
 | `MinimizeToTray` | DWORD | 1 (default): tray only, minimize hides; 0: taskbar button too |
-| `NmapEnabled` | DWORD | 0/1, subnet scans in the IP address context menu |
+| `ExpandedAdapter` | SZ | GUID of the expanded adapter, expanded again at the next start if it still exists |
+| `NmapEnabled` | DWORD | 0/1, scan buttons on IP address rows |
 | `NmapPath` | SZ | nmap.exe path (found on PATH or in `Program Files\Nmap`, else picked) |
 | `Hosts` | SZ | JSON: hosts (name, address) and their actions, which connect to the host address; passwords DPAPI-encrypted (`"dpapi:…"`) |
 | `Presets` | SZ | JSON, the same format as the export file |

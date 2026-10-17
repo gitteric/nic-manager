@@ -241,6 +241,7 @@ std::string ProtectString(const std::wstring& plain) { return Protect(plain); }
 std::wstring UnprotectString(const std::string& stored) { return Unprotect(stored); }
 
 void SaveTightVncPath(const std::wstring& path) { WriteString(L"TightVncPath", path); }
+void SaveExpandedAdapter(const std::wstring& guid) { WriteString(L"ExpandedAdapter", guid); }
 
 std::string PresetsToJson(const std::vector<Preset>& presets) {
     json::Value root = json::Value::Object();
@@ -297,6 +298,7 @@ AppSettings Load() {
     s.alwaysOnTop = ReadDword(L"AlwaysOnTop", 0) != 0;
     s.minimizeToTray = ReadDword(L"MinimizeToTray", 1) != 0;
     s.tightVncPath = ReadString(L"TightVncPath");
+    s.expandedAdapter = ReadString(L"ExpandedAdapter");
     s.nmapEnabled = ReadDword(L"NmapEnabled", 0) != 0;
     s.nmapPath = ReadString(L"NmapPath");
 
