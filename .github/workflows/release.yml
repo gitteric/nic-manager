@@ -1,6 +1,9 @@
-# Builds NicManager for x64 and x86 with MSYS2 MinGW-w64 (the same toolchain
-# as the local presets) and publishes a GitHub release when a version tag is
-# pushed:   git tag v1.0.0.0 && git push origin v1.0.0.0
+# Builds NicManager for x64 and x86 and publishes a GitHub release when a
+# version tag is pushed:   git tag v1.2.0.0 && git push origin v1.2.0.0
+#
+# Both exes are cross-compiled on Ubuntu with MinGW-w64 (GCC, the same
+# compiler family as the MSYS2 presets). MSYS2's 32-bit environment is being
+# phased out, so the x86 build no longer depends on it.
 name: Release
 
 on:
@@ -12,52 +15,43 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: x64
-            msystem: UCRT64
-            pkg: ucrt-x86_64
+            mingw: x86_64
           - arch: x86
-            msystem: MINGW32
-            pkg: i686
+            mingw: i686
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Version from tag
-        shell: pwsh
-        run: '"VERSION=$($env:GITHUB_REF_NAME.TrimStart(''v''))" >> $env:GITHUB_ENV'
-
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: ${{ matrix.msystem }}
-          update: false
-          install: >-
-            mingw-w64-${{ matrix.pkg }}-gcc
-            mingw-w64-${{ matrix.pkg }}-cmake
-            mingw-w64-${{ matrix.pkg }}-ninja
-            mingw-w64-${{ matrix.pkg }}-osslsigncode
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mingw-w64 cmake ninja-build osslsigncode
 
       # Optional signing: with the secrets SIGNING_PFX_BASE64 and
       # SIGNING_PFX_PASSWORD set (see tools/make-cert.ps1) the exes are
       # signed; without them the release is built unsigned.
       - name: Signing key
-        shell: pwsh
         env:
           PFX: ${{ secrets.SIGNING_PFX_BASE64 }}
         run: |
-          if ($env:PFX) {
-            New-Item -ItemType Directory -Force signing | Out-Null
-            [IO.File]::WriteAllBytes("signing/nicmanager.pfx", [Convert]::FromBase64String($env:PFX))
-          }
+          if [ -n "$PFX" ]; then
+            mkdir -p signing
+            echo "$PFX" | base64 -d > signing/nicmanager.pfx
+          fi
 
       - name: Build
-        shell: msys2 {0}
         env:
           NICMGR_SIGN_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNICMGR_VERSION="$VERSION"
+          VERSION="${GITHUB_REF_NAME#v}"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_TOOLCHAIN_FILE=toolchain-mingw.cmake -DMINGW_ARCH=${{ matrix.mingw }} \
+                -DNICMGR_VERSION="$VERSION"
           cmake --build build
           mkdir -p out
           cp build/NicManager.exe "out/NicManager-$VERSION-${{ matrix.arch }}.exe"
