@@ -15,6 +15,8 @@ bool AutostartInstalled();  // the logon task exists
 
 // Creates the tasks (and the shortcut). Empty string on success, else the reason.
 std::wstring Install(bool autostart, bool desktopShortcut);
+// Re-creates existing tasks that still use an older definition (IgnoreNew).
+void Upgrade();
 // Removes both tasks and the desktop shortcut.
 std::wstring Remove();
 

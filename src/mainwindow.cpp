@@ -31,6 +31,7 @@ constexpr UINT WM_APP_EDITKEY = WM_APP + 5;  // wParam: 1 commit, 0 cancel; lPar
 constexpr UINT_PTR kTimerSpin = 1;
 constexpr UINT_PTR kTimerStatus = 2;
 constexpr UINT_PTR kTimerToast = 3;
+constexpr UINT_PTR kTimerTray = 4;  // retries the tray icon while Explorer is not ready yet
 constexpr UINT kToastMs = 5000;
 constexpr UINT kTrayId = 1;
 constexpr int kEditId = 100;
@@ -176,6 +177,11 @@ LRESULT CALLBACK MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
 
 void MainWindow::OnCreate() {
     m_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+    // We run elevated and Explorer does not: without this, UIPI drops its
+    // TaskbarCreated broadcast and the tray icon is gone after an Explorer
+    // restart. WM_APP_SHOW comes from a second start of the exe.
+    ChangeWindowMessageFilterEx(m_hwnd, m_taskbarCreated, MSGFLT_ALLOW, nullptr);
+    ChangeWindowMessageFilterEx(m_hwnd, WM_APP_SHOW, MSGFLT_ALLOW, nullptr);
     UpdateDpi(DpiForWindow(m_hwnd));
 
     // Rounded corners on Windows 11 (attribute 33 = DWMWA_WINDOW_CORNER_PREFERENCE, 2 = round).
@@ -198,6 +204,7 @@ void MainWindow::OnCreate() {
     m_pinger.SetCycle(m_settings.pingCycleMs);
     SyncPinger();
     m_monitor.Start(m_hwnd, WM_APP_ADAPTERS, m_demo);
+    if (m_elevated && !m_demo) std::thread(starttask::Upgrade).detach();  // a few schtasks calls, off the UI thread
     if (m_demo) SetStatus(L"Demo mode", theme::Accent, 8000);
     else if (!m_elevated) SetStatus(L"Read-only: not elevated", theme::TextDim, 8000);
     Relayout();
@@ -249,6 +256,7 @@ void MainWindow::DestroyFonts() {
 }
 
 void MainWindow::AddTrayIcon() {
+    KillTimer(m_hwnd, kTimerTray);
     NOTIFYICONDATAW nid{sizeof(nid)};
     nid.hWnd = m_hwnd;
     nid.uID = kTrayId;
@@ -256,7 +264,13 @@ void MainWindow::AddTrayIcon() {
     nid.uCallbackMessage = WM_APP_TRAY;
     nid.hIcon = m_iconSmall;
     wcscpy_s(nid.szTip, L"NIC Manager");
-    Shell_NotifyIconW(NIM_ADD, &nid);
+    if (Shell_NotifyIconW(NIM_ADD, &nid) || Shell_NotifyIconW(NIM_MODIFY, &nid)) {
+        m_trayRetries = 0;
+        return;
+    }
+    // At logon the autostart task can run before the taskbar accepts icons.
+    // Without a retry the app would live on hidden, with no way to reach it.
+    if (m_trayRetries++ < 60) SetTimer(m_hwnd, kTimerTray, 2000, nullptr);
 }
 
 // =========================================================================
@@ -377,6 +391,8 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             ScreenToClient(m_hwnd, &pt);
             if (PtInRect(&m_toastRc, pt)) SetTimer(m_hwnd, kTimerToast, 1000, nullptr);  // held while hovered
             else HideToast();
+        } else if (wp == kTimerTray) {
+            AddTrayIcon();
         } else if (wp == kTimerStatus) {
             KillTimer(m_hwnd, kTimerStatus);
             m_status.clear();
@@ -602,8 +618,13 @@ void MainWindow::AddAdapterDetails(int ai) {
 
     caption(L"IP address / subnet", isStatic, Cmd::AddAddr, L"Add IP address");
     for (int k = 0; k < (int)c.addresses.size(); ++k) {
-        value(ip::Format(c.addresses[k]), k, EditKind::Address, isStatic, Cmd::EditAddr, isStatic && k > 0,
+        // Editable under DHCP too: committing the edit switches the adapter to static.
+        value(ip::Format(c.addresses[k]), k, EditKind::Address, true, Cmd::EditAddr, isStatic && k > 0,
               Cmd::DelAddr);
+        if (!isStatic) {
+            m_rows.back().tip = L"Double-click to edit (switches DHCP off and keeps the other values as static)";
+            m_rows.back().buttons.back().tip = L"Edit (switches DHCP off)";
+        }
         if (m_settings.nmapEnabled) {
             auto& b = m_rows.back().buttons;
             if (m_scanning && m_scanGuid == a.guid && m_scanIndex == k)
@@ -1182,7 +1203,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
 
     case Cmd::EditAddr:
         if (a && idx >= 0 && idx < (int)c.addresses.size())
-            BeginEdit(EditKind::Address, row.adapter, idx, ip::Format(c.addresses[idx]));
+            BeginEdit(EditKind::Address, row.adapter, idx, ip::Format(c.addresses[idx]), c.dhcp);
         break;
     case Cmd::DelAddr:
         if (a && idx > 0 && idx < (int)c.addresses.size()) {
@@ -1417,10 +1438,9 @@ void MainWindow::CommitEdit() {
         return;
     }
     Ipv4Config c = a->cfg;
-    if (t.fromDhcp) {
+    if (t.fromDhcp) {  // keep the leased values (other addresses, gateway, DNS) as static configuration
         c.dhcp = false;
         c.autoDns = false;
-        c.addresses.clear();
     }
     auto replaceOrAdd = [&](std::vector<std::wstring>& list, bool isNew, const std::wstring& v) {
         if (isNew) list.push_back(v);

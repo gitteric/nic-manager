@@ -73,7 +73,7 @@ private:
         std::wstring guid;  // adapter
         int host = -1;
         int index = -1;
-        bool fromDhcp = false;  // switching DHCP off with no address yet
+        bool fromDhcp = false;  // committing switches DHCP off (other leased values stay as static)
     };
     struct Metrics {
         int width, title, bottom, header, adapter, host, toggle, caption, value, action, hint;
@@ -204,6 +204,7 @@ private:
     Hit m_hover, m_press;
     bool m_trackingMouse = false;
     bool m_trackingNc = false;   // TME_NONCLIENT tracking over the title strip
+    int m_trayRetries = 0;       // failed tray icon adds so far (see AddTrayIcon)
     bool m_dragScroll = false;
     int m_dragStartY = 0, m_dragStartScroll = 0;
     std::wstring m_tipText;

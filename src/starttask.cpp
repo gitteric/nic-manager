@@ -58,7 +58,9 @@ bool TaskExists(const wchar_t* name) {
 }
 
 // Task definition: highest privileges, interactive (needs the user's
-// desktop for the tray icon), no time limit, never started twice.
+// desktop for the tray icon), no time limit. Parallel instances are allowed:
+// the exe itself is single-instance and hands over to a running window, and
+// with IgnoreNew a leftover process kept the shortcut from doing anything.
 std::wstring TaskXml(bool logon, const std::wstring& user) {
     const std::wstring exe = SelfPath();
     std::wstring dir = exe.substr(0, exe.find_last_of(L'\\'));
@@ -76,7 +78,7 @@ std::wstring TaskXml(bool logon, const std::wstring& user) {
          L"</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel>"
          L"</Principal></Principals>\r\n"
          L"  <Settings>\r\n"
-         L"    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\r\n"
+         L"    <MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>\r\n"
          L"    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\r\n"
          L"    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\r\n"
          L"    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\r\n"
@@ -161,6 +163,20 @@ std::wstring Install(bool autostart, bool desktopShortcut) {
     }
     if (err.empty() && desktopShortcut) err = CreateShortcut();
     return err;
+}
+
+void Upgrade() {
+    const std::wstring user = CurrentUser();
+    for (bool logon : {false, true}) {
+        const wchar_t* name = logon ? kAutostartTask : kTask;
+        auto r = netcmd::RunProcess(SystemExe(L"schtasks.exe"), L"/Query /TN \"" + std::wstring(name) + L"\" /XML",
+                                    kTimeoutMs);
+        if (!r.started || r.timedOut || r.exitCode != 0) continue;
+        std::wstring xml;
+        for (wchar_t c : r.output)
+            if (c) xml += c;  // tolerate UTF-16 output read as OEM bytes
+        if (xml.find(L"IgnoreNew") != std::wstring::npos) CreateTask(name, TaskXml(logon, user));
+    }
 }
 
 std::wstring Remove() {
