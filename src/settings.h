@@ -8,6 +8,8 @@
 //   ExpandedAdapter REG_SZ  GUID of the adapter shown expanded (restored at start)
 //   NmapEnabled  REG_DWORD  0/1 (subnet scans in the IP address context menu)
 //   NmapPath     REG_SZ     full path of nmap.exe
+//   HiddenAdapters REG_SZ   GUIDs of adapters hidden from the list, ';'-separated
+//   ShowHidden   REG_DWORD  0/1 (1: hidden adapters are listed anyway, dimmed)
 //   Hosts        REG_SZ     JSON array of hosts + actions (passwords DPAPI-encrypted)
 //   Presets      REG_SZ     JSON document of IPv4 presets (same format as export files)
 #pragma once
@@ -30,6 +32,8 @@ struct AppSettings {
     std::wstring expandedAdapter;
     bool nmapEnabled = false;
     std::wstring nmapPath;
+    std::vector<std::wstring> hiddenAdapters;  // GUIDs
+    bool showHidden = false;
     std::vector<HostEntry> hosts;
     std::vector<Preset> presets;
 };
@@ -40,11 +44,12 @@ constexpr DWORD kMinPingCycleMs = 1;
 constexpr DWORD kMaxPingCycleMs = 10000;
 
 AppSettings Load();
-void SaveGeneral(const AppSettings& s);  // cycle, window position, flags, nmap
+void SaveGeneral(const AppSettings& s);  // cycle, window position, flags, nmap, show hidden
 void SaveHosts(const std::vector<HostEntry>& hosts);
 void SavePresets(const std::vector<Preset>& presets);
 void SaveTightVncPath(const std::wstring& path);
 void SaveExpandedAdapter(const std::wstring& guid);  // empty: none
+void SaveHiddenAdapters(const std::vector<std::wstring>& guids);
 
 // DPAPI for the current Windows user ("dpapi:<base64>"); empty on failure.
 std::string ProtectString(const std::wstring& plain);

@@ -243,6 +243,12 @@ std::wstring UnprotectString(const std::string& stored) { return Unprotect(store
 void SaveTightVncPath(const std::wstring& path) { WriteString(L"TightVncPath", path); }
 void SaveExpandedAdapter(const std::wstring& guid) { WriteString(L"ExpandedAdapter", guid); }
 
+void SaveHiddenAdapters(const std::vector<std::wstring>& guids) {
+    std::wstring v;
+    for (const auto& g : guids) v += (v.empty() ? L"" : L";") + g;
+    WriteString(L"HiddenAdapters", v);
+}
+
 std::string PresetsToJson(const std::vector<Preset>& presets) {
     json::Value root = json::Value::Object();
     root.Set("format", "nic-manager-ipv4-presets");
@@ -301,6 +307,14 @@ AppSettings Load() {
     s.expandedAdapter = ReadString(L"ExpandedAdapter");
     s.nmapEnabled = ReadDword(L"NmapEnabled", 0) != 0;
     s.nmapPath = ReadString(L"NmapPath");
+    const std::wstring hidden = ReadString(L"HiddenAdapters");
+    for (size_t pos = 0; pos < hidden.size();) {
+        size_t end = hidden.find(L';', pos);
+        if (end == std::wstring::npos) end = hidden.size();
+        if (end > pos) s.hiddenAdapters.push_back(hidden.substr(pos, end - pos));
+        pos = end + 1;
+    }
+    s.showHidden = ReadDword(L"ShowHidden", 0) != 0;
 
     json::Value hosts;
     if (json::Parse(WideToUtf8(ReadString(L"Hosts")), hosts) && hosts.IsArray()) s.hosts = HostsFromJson(hosts);
@@ -316,6 +330,7 @@ void SaveGeneral(const AppSettings& s) {
         WriteDword(key, L"AlwaysOnTop", s.alwaysOnTop ? 1 : 0);
         WriteDword(key, L"MinimizeToTray", s.minimizeToTray ? 1 : 0);
         WriteDword(key, L"NmapEnabled", s.nmapEnabled ? 1 : 0);
+        WriteDword(key, L"ShowHidden", s.showHidden ? 1 : 0);
         RegCloseKey(key);
     }
     WriteString(L"NmapPath", s.nmapPath);

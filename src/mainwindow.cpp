@@ -52,10 +52,12 @@ constexpr wchar_t kGlyphCopy = 0xE8C8;
 constexpr wchar_t kGlyphMinimize = 0xE921;
 constexpr wchar_t kGlyphError = 0xEA39;
 constexpr wchar_t kGlyphScan = 0xE721;  // magnifier
+constexpr wchar_t kGlyphView = 0xE890;  // eye: hidden adapters are shown
+constexpr wchar_t kGlyphHide = 0xED1A;  // crossed-out eye: hidden adapters are left out
 
 enum : UINT {
     IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_CERT, IDM_TASK_SETUP, IDM_TASK_REMOVE, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
-    IDM_NMAP, IDM_NMAP_PATH, IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP,
+    IDM_NMAP, IDM_NMAP_PATH, IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP, IDM_HIDE_ADAPTER,
     IDM_CYCLE_BASE = 200,
     IDM_APPLY_PRESET_BASE = 1000,
 };
@@ -467,6 +469,11 @@ std::wstring MainWindow::AdapterTip(const Adapter& a) const {
     return s;
 }
 
+bool MainWindow::IsHidden(const std::wstring& guid) const {
+    const auto& list = m_settings.hiddenAdapters;
+    return std::find(list.begin(), list.end(), guid) != list.end();
+}
+
 COLORREF MainWindow::AdapterColor(const Adapter& a) const {
     if (!a.enabled) return theme::Grey;
     return a.connected ? theme::Green : theme::Red;
@@ -480,12 +487,12 @@ void MainWindow::BuildLayout() {
         Row& h = Push(RowKind::Header, M.header);
         h.text = L"ADAPTERS";
     }
-    if (m_adapters.empty()) {
-        Row& r = Push(RowKind::Hint, M.hint);
-        r.text = m_adaptersLoaded ? L"No network adapters found" : L"Loading...";
-    }
+    int listed = 0;
     for (int i = 0; i < (int)m_adapters.size(); ++i) {
         const Adapter& a = m_adapters[i];
+        const bool hidden = IsHidden(a.guid);
+        if (hidden && !m_settings.showHidden) continue;
+        ++listed;
         bool expanded = a.guid == m_expandedAdapter;
         {
             Row& r = Push(RowKind::Adapter, M.adapter);
@@ -494,7 +501,11 @@ void MainWindow::BuildLayout() {
             r.sub = AdapterSummary(a);
             r.tip = AdapterTip(a);
             r.state = AdapterColor(a);
-            r.dim = !a.enabled;
+            r.dim = !a.enabled || hidden;
+            if (hidden) {
+                r.sub = L"Hidden \u00B7 " + r.sub;
+                r.tip += L"\r\nHidden (right-click to show it again)";
+            }
             r.expanded = expanded;
             r.chevron = true;
             r.rowCmd = Cmd::ExpandAdapter;
@@ -502,6 +513,12 @@ void MainWindow::BuildLayout() {
                 r.buttons.push_back({kGlyphWifi, Cmd::OpenWifi, L"Choose a Wi-Fi network"});
         }
         if (expanded) AddAdapterDetails(i);
+    }
+    if (listed == 0) {
+        Row& r = Push(RowKind::Hint, M.hint);
+        r.text = !m_adaptersLoaded     ? L"Loading..."
+                 : m_adapters.empty() ? L"No network adapters found"
+                                      : L"All adapters are hidden";
     }
 
     {
@@ -699,8 +716,11 @@ void MainWindow::PlaceButtons() {
         {kGlyphNetwork, Cmd::OpenNcpa, L"Network connections (ncpa.cpl)"},
         {kGlyphGlobe, Cmd::FlushDns, L"Flush DNS cache"},
         {kGlyphRefresh, Cmd::RenewDhcp, L"Renew DHCP lease (expanded adapter, or all)"},
+        {m_settings.showHidden ? kGlyphView : kGlyphHide, Cmd::ToggleShowHidden,
+         m_settings.showHidden ? L"Hidden adapters are shown (click to leave them out)"
+                               : L"Hidden adapters are left out (click to show them)"},
     };
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < (int)std::size(bar); ++i) {
         int x = S(6) + i * (bw + S(2));
         int y = by + (M.bottom - bh) / 2;
         m_fixed.push_back({bar[i].g, bar[i].c, bar[i].tip, {x, y, x + bw, y + bh}});
@@ -1327,6 +1347,11 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
     }
     case Cmd::Hide: ShowWindow(m_hwnd, SW_HIDE); break;
     case Cmd::Exit: DestroyWindow(m_hwnd); break;
+    case Cmd::ToggleShowHidden:
+        m_settings.showHidden = !m_settings.showHidden;
+        settings::SaveGeneral(m_settings);
+        Relayout();
+        break;
     case Cmd::Minimize: ShowWindow(m_hwnd, m_settings.minimizeToTray ? SW_HIDE : SW_MINIMIZE); break;
     }
 }
@@ -1846,6 +1871,8 @@ void MainWindow::ShowAdapterMenu(int ai, POINT screen) {
     const bool canUse = a.enabled && a.ipv4Enabled;
 
     HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING | (IsHidden(a.guid) ? MF_CHECKED : 0), IDM_HIDE_ADAPTER, L"Hidden");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (canUse ? 0 : MF_GRAYED), IDM_SAVE_PRESET, L"Save IPv4 config as preset...");
     HMENU apply = CreatePopupMenu();
     for (int i = 0; i < (int)m_settings.presets.size(); ++i)
@@ -1859,7 +1886,14 @@ void MainWindow::ShowAdapterMenu(int ai, POINT screen) {
     UINT id = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, 0, m_hwnd, nullptr);
     DestroyMenu(menu);
 
-    if (id == IDM_REFRESH) {
+    if (id == IDM_HIDE_ADAPTER) {
+        auto& list = m_settings.hiddenAdapters;
+        auto it = std::find(list.begin(), list.end(), a.guid);
+        if (it != list.end()) list.erase(it);
+        else list.push_back(a.guid);
+        settings::SaveHiddenAdapters(list);
+        Relayout();
+    } else if (id == IDM_REFRESH) {
         m_monitor.Trigger();
     } else if (id == IDM_SAVE_PRESET) {
         auto name = dialogs::PromptText(m_hwnd, L"Save IPv4 preset", L"Preset name:", a.name,

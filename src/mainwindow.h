@@ -42,6 +42,7 @@ private:
         EditAddr, DelAddr, AddAddr, EditGw, DelGw, AddGw, EditDns, DelDns, AddDns,
         AddHost, EditHost, DelHost, AddAction, RunAction, EditAction, DelAction,
         OpenNcpa, OpenWifi, FlushDns, RenewDhcp, Hide, Exit, Minimize, ScanSubnet, StopScan,
+        ToggleShowHidden,
     };
     enum class EditKind { None, Address, NewAddress, Gateway, NewGateway, Dns, NewDns, Host, NewHost };
     enum class RowKind { Header, Adapter, Toggle, Caption, Value, Host, Action, Hint };
@@ -176,6 +177,7 @@ private:
 
     std::wstring AdapterSummary(const Adapter& a) const;
     std::wstring AdapterTip(const Adapter& a) const;
+    bool IsHidden(const std::wstring& guid) const;
     COLORREF AdapterColor(const Adapter& a) const;
 
     HINSTANCE m_inst = nullptr;
