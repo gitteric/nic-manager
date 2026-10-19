@@ -230,7 +230,7 @@ void MainWindow::UpdateDpi(UINT dpi) {
     M.pad = S(8);
     M.indent = S(18);
     M.btn = S(18);
-    M.bar = S(3);
+    M.bar = S(6);
     M.scrollW = S(4);
     M.editH = S(20);
     M.switchW = S(26);
