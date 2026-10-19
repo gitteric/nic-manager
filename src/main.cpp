@@ -98,7 +98,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     // The window is gone and settings are saved as they change. End the
     // process here instead of waiting for worker threads (a running job, ping
     // or DNS lookups): nothing may keep NIC Manager alive after Exit. Child
-    // processes (nmap, netsh) die with it through their job object.
+    // processes (netsh, ipconfig, schtasks) die with it through their job object.
     if (mutex) CloseHandle(mutex);
     TerminateProcess(GetCurrentProcess(), (UINT)code);
     return code;

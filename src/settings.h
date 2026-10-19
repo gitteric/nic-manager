@@ -6,8 +6,6 @@
 //   MinimizeToTray REG_DWORD 0/1 (1: no taskbar button, minimize hides to tray)
 //   TightVncPath REG_SZ   full path of tvnviewer.exe (edited in the VNC action dialog)
 //   ExpandedAdapter REG_SZ  GUID of the adapter shown expanded (restored at start)
-//   NmapEnabled  REG_DWORD  0/1 (subnet scans in the IP address context menu)
-//   NmapPath     REG_SZ     full path of nmap.exe
 //   HiddenAdapters REG_SZ   GUIDs of adapters hidden from the list, ';'-separated
 //   ShowHidden   REG_DWORD  0/1 (1: hidden adapters are listed anyway, dimmed)
 //   Design       REG_DWORD  index into theme::kDesigns (0 Standard, 1 Color-blind friendly)
@@ -31,8 +29,6 @@ struct AppSettings {
     bool minimizeToTray = true;
     std::wstring tightVncPath;
     std::wstring expandedAdapter;
-    bool nmapEnabled = false;
-    std::wstring nmapPath;
     std::vector<std::wstring> hiddenAdapters;  // GUIDs
     bool showHidden = false;
     int design = 0;
@@ -46,7 +42,7 @@ constexpr DWORD kMinPingCycleMs = 100;
 constexpr DWORD kMaxPingCycleMs = 30000;
 
 AppSettings Load();
-void SaveGeneral(const AppSettings& s);  // cycle, window position, flags, nmap, show hidden
+void SaveGeneral(const AppSettings& s);  // cycle, window position, flags, show hidden, design
 void SaveHosts(const std::vector<HostEntry>& hosts);
 void SavePresets(const std::vector<Preset>& presets);
 void SaveTightVncPath(const std::wstring& path);

@@ -88,5 +88,6 @@ struct HostAction {
 struct HostEntry {
     std::wstring name;     // display name, defaults to the address
     std::wstring address;  // IPv4 or host name
+    bool ping = true;      // monitored by the pinger; off leaves the marker grey
     std::vector<HostAction> actions;
 };

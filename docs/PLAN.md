@@ -140,7 +140,7 @@ doing more.
 - **UI thread:** layout, painting and input. It never blocks.
 - **Adapter monitor:** one thread. It wakes on IP interface, address and route change notifications, and polls every 2 s to catch enable/disable and cable changes. It posts a new snapshot only when something changed, and posts nothing while you are editing a field, so rows don't move under the cursor.
 - **Pinger:** one thread per host. Each one resolves the name (cached for 30 s), sends `IcmpSendEcho` with a 1 s timeout, posts the result, then waits for the ping cycle. A down host never delays the others.
-- **Exit:** after the message loop, `main` ends the process with `TerminateProcess`, so no worker thread (job, ping, DNS lookup, adapter query) can keep it alive. Child processes started by `RunProcess` (netsh, ipconfig, nmap) sit in a kill-on-close job object and die with it. Clients started by actions (mstsc, ssh, VNC, browser) are not in that job and stay open.
+- **Exit:** after the message loop, `main` ends the process with `TerminateProcess`, so no worker thread (job, ping, DNS lookup, adapter query) can keep it alive. Child processes started by `RunProcess` (netsh, ipconfig, schtasks) sit in a kill-on-close job object and die with it. Clients started by actions (mstsc, ssh, VNC, browser) are not in that job and stay open.
 - **Command job:** one worker at a time. While it runs, the spinner shows and other commands are refused. A single netsh/ipconfig call is killed after 20 s, and a whole job after 60 s.
 
 ### How changes are applied
@@ -173,15 +173,16 @@ Behaviour I chose where your list left it open:
 
 | Value | Type | Content |
 |---|---|---|
-| `PingCycleMs` | DWORD | 1–10000, default 5000 |
+| `PingCycleMs` | DWORD | 100–30000, default 5000 |
 | `WindowX`, `WindowY` | DWORD | last position |
 | `AlwaysOnTop` | DWORD | 0/1 |
 | `TightVncPath` | SZ | tvnviewer.exe path, edited in the VNC action dialog |
 | `MinimizeToTray` | DWORD | 1 (default): tray only, minimize hides; 0: taskbar button too |
 | `ExpandedAdapter` | SZ | GUID of the expanded adapter, expanded again at the next start if it still exists |
-| `NmapEnabled` | DWORD | 0/1, scan buttons on IP address rows |
-| `NmapPath` | SZ | nmap.exe path (found on PATH or in `Program Files\Nmap`, else picked) |
-| `Hosts` | SZ | JSON: hosts (name, address) and their actions, which connect to the host address; passwords DPAPI-encrypted (`"dpapi:…"`) |
+| `HiddenAdapters` | SZ | GUIDs of hidden adapters, `;`-separated (adapter context menu "Hidden") |
+| `ShowHidden` | DWORD | 0/1, bottom bar eye button: list hidden adapters anyway, dimmed |
+| `Design` | DWORD | tray menu Design: 0 Standard (green/red), 1 Color-blind friendly (blue/orange) |
+| `Hosts` | SZ | JSON: hosts (name, address, ping on/off) and their actions, which connect to the host address; passwords DPAPI-encrypted (`"dpapi:…"`) |
 | `Presets` | SZ | JSON, the same format as the export file |
 
 Preset export file:
@@ -200,19 +201,19 @@ Preset export file:
 
 Import validates every address and replaces presets that have the same name.
 
-### nmap subnet scans
+### Subnet scans
 
-The tray item "nmap subnet scan" turns the feature on. It looks for nmap.exe on PATH and in `Program Files (x86)\Nmap` / `Program Files\Nmap`, and opens a file picker when it finds none. Each adapter IP address row then has a scan button (magnifier) that offers ARP, ping or a TCP port check of that address's subnet, limited to /24 or smaller (larger subnets show a hint instead).
+Each adapter IP address row has a scan button (magnifier) that offers ARP, ping or a TCP port check of that address's subnet, limited to /24 or smaller (larger subnets show a hint instead). `src/scan.cpp` needs no external tool, no Npcap and no administrator rights. It probes 64 addresses at a time, one try each:
 
-`src/nmap.cpp` probes every address with its own short nmap run, 16 at a time, one probe and no retries:
-
-| Scan | nmap arguments per address |
+| Scan | Probe per address |
 |---|---|
-| ARP | `-sn -PR --max-retries 0 -T4 -oX - <ip>` |
-| Ping | `-sn -PE --disable-arp-ping --max-retries 0 -T4 -oX - <ip>` |
-| TCP port | `-sT -Pn -p <port> --max-retries 0 -T4 -oX - <ip>` |
+| ARP | `SendARP` from the row's own address (local subnet only, gives the MAC) |
+| Ping | `IcmpSendEcho`, 1 s timeout |
+| TCP port | non-blocking `connect`, 1 s timeout; only open ports count |
 
-The bottom bar counts the addresses done ("37/254"). While a scan runs, its scan button turns into X, which stops it. Stopping, or the 3-minute limit, still opens the list with the hosts found so far. The XML gives hosts that are up (for TCP: with the port open), with MAC, vendor and reverse DNS name where nmap reports them, sorted by address. The list's "Add selected to ping list" and "Add all to ping list" buttons add hosts (name = reverse DNS name if any) and skip addresses already listed. ARP and ping need Npcap; when nmap warns about Npcap or raw sockets the scan fails with a hint, because nmap would otherwise fall back to TCP probes silently.
+After the probes, ping and TCP hits get their MAC from the ARP table (`GetIpNetTable2`), every MAC gets a vendor from the embedded IEEE OUI table (`res/oui.bin`, built by `tools/make-oui.py`; locally administered MACs show "(random MAC)"), and names come from `GetNameInfoW` (DNS, NetBIOS, LLMNR), 16 lookups at a time.
+
+The bottom bar counts the addresses done ("37/254"). While a scan runs, its scan button turns into X, which stops it. Stopping, or the 3-minute limit, still opens the list with the hosts found so far, sorted by address. The list's "Add selected to ping list" and "Add all to ping list" buttons add hosts (name = reverse DNS name if any) and skip addresses already listed.
 
 ### Actions
 
@@ -236,7 +237,7 @@ The bottom bar counts the addresses done ("37/254"). While a scan runs, its scan
 | `src/dialogs.*` | action editor, preset manager, text prompt |
 | `src/ipaddr.*`, `src/json.*` | validation and JSON |
 | `src/actions.*` | RDP (temp .rdp + mstsc), SSH (Windows OpenSSH + askpass), TightVNC, Browser |
-| `src/nmap.*` | nmap subnet scans (ARP, ping, TCP port) and XML parsing |
+| `src/scan.*` | subnet scans (ARP, ping, TCP port), MAC vendors, names |
 | `src/theme.h`, `src/model.h` | colours, data types |
 | `res/` | dialog templates, manifest (elevation, DPI, common controls v6) |
 

@@ -5,6 +5,7 @@
 #define IDD_PRESETS       103
 #define IDD_HOST          104
 #define IDR_SIGNING_CERT  110
+#define IDR_OUI           111  // MAC vendor table (res/oui.bin, tools/make-oui.py)
 #define IDI_APP           1
 #define IDD_STARTTASK     105
 #define IDD_SCANRESULT    106
@@ -44,3 +45,4 @@
 #define IDC_COPY          1044
 #define IDC_ADD_SELECTED  1045
 #define IDC_ADD_ALL       1046
+#define IDC_HOST_PING     1047

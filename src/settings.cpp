@@ -157,6 +157,7 @@ json::Value HostsToJson(const std::vector<HostEntry>& hosts) {
         json::Value o = json::Value::Object();
         o.Set("name", Str(h.name));
         o.Set("address", Str(h.address));
+        o.Set("ping", h.ping);
         json::Value acts = json::Value::Array();
         for (const auto& a : h.actions) {
             json::Value j = json::Value::Object();
@@ -194,6 +195,7 @@ std::vector<HostEntry> HostsFromJson(const json::Value& arr) {
         if (!ip::IsValidHost(h.address)) continue;
         h.name = Trim(WStr(o["name"]));
         if (h.name.empty()) h.name = h.address;
+        h.ping = o["ping"].AsBool(true);
         for (const auto& j : o["actions"].Items()) {
             std::string type = j["type"].AsString();
             HostAction a;
@@ -305,8 +307,6 @@ AppSettings Load() {
     s.minimizeToTray = ReadDword(L"MinimizeToTray", 1) != 0;
     s.tightVncPath = ReadString(L"TightVncPath");
     s.expandedAdapter = ReadString(L"ExpandedAdapter");
-    s.nmapEnabled = ReadDword(L"NmapEnabled", 0) != 0;
-    s.nmapPath = ReadString(L"NmapPath");
     const std::wstring hidden = ReadString(L"HiddenAdapters");
     for (size_t pos = 0; pos < hidden.size();) {
         size_t end = hidden.find(L';', pos);
@@ -330,12 +330,10 @@ void SaveGeneral(const AppSettings& s) {
         WriteDword(key, L"WindowY", (DWORD)s.windowY);
         WriteDword(key, L"AlwaysOnTop", s.alwaysOnTop ? 1 : 0);
         WriteDword(key, L"MinimizeToTray", s.minimizeToTray ? 1 : 0);
-        WriteDword(key, L"NmapEnabled", s.nmapEnabled ? 1 : 0);
         WriteDword(key, L"ShowHidden", s.showHidden ? 1 : 0);
         WriteDword(key, L"Design", (DWORD)s.design);
         RegCloseKey(key);
     }
-    WriteString(L"NmapPath", s.nmapPath);
 }
 
 void SaveHosts(const std::vector<HostEntry>& hosts) {

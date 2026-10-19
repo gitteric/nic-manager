@@ -22,7 +22,7 @@ std::optional<std::wstring> PromptText(HWND owner, const std::wstring& title, co
 bool AskStartTask(HWND owner, bool& autostart, bool& shortcut);
 
 // Name and address of a host entry; an empty name becomes the address.
-bool EditHost(HWND owner, std::wstring& name, std::wstring& address);
+bool EditHost(HWND owner, std::wstring& name, std::wstring& address, bool& ping);
 
 // Edits `action` in place; returns false on cancel. Actions connect to
 // `hostAddress` (shown read-only; the browser URL is preset to it).
@@ -31,9 +31,6 @@ bool EditAction(HWND owner, HostAction& action, const std::wstring& hostAddress,
 
 // List with delete / export / import. Returns true if `presets` changed.
 bool ManagePresets(HWND owner, std::vector<Preset>& presets);
-
-// Open-file picker for a program; `path` is the initial and the chosen file.
-bool PickProgram(HWND owner, const wchar_t* title, const wchar_t* filter, std::wstring& path);
 
 // Read-only result list: one row per entry, cells shown in tab-aligned
 // columns. Copy puts the selected rows (or all) on the clipboard. With

@@ -14,7 +14,7 @@
 #include "model.h"
 #include "netcmd.h"
 #include "netinfo.h"
-#include "nmap.h"
+#include "scan.h"
 #include "pinger.h"
 #include "settings.h"
 
@@ -161,6 +161,8 @@ private:
     // menus
     void ShowTrayMenu();
     void ShowAdapterMenu(int ai, POINT screen);
+    void ShowHostMenu(int rowIndex, POINT screen);
+    void SetHostPing(int i, bool on);  // caller saves and syncs the pinger
     void ShowWindowNear(bool show = true);
     void ToggleVisible();
     void ShowRestored();
@@ -169,10 +171,8 @@ private:
     void RemoveStartTask();
     void ApplyTaskbarMode();  // taskbar button only while not minimizing to tray
     void OpenPresetEditor();
-    void ToggleNmap();
-    bool SelectNmap();
     void ShowScanMenu(Adapter a, int index);  // copy: the list may refresh during the prompt
-    void StartScan(const Adapter& a, int index, nmap::Kind kind, uint32_t network, int prefix, int port);
+    void StartScan(const Adapter& a, int index, scan::Kind kind, uint32_t network, int prefix, int port);
     void OnScanProgress(int done, int total);
 
     std::wstring AdapterSummary(const Adapter& a) const;

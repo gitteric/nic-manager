@@ -4,10 +4,10 @@
 
 A small, fast tray tool for Windows 10/11 that switches network adapter IPv4
 settings, keeps IPv4 presets, watches a list of hosts with ping and connects to
-them with RDP, SSH, VNC or the browser in one click. Optionally it scans a
-subnet with nmap.
+them with RDP, SSH, VNC or the browser in one click. It also scans a subnet
+for hosts (ARP, ping or a TCP port), without extra tools.
 
-Plain C++17 on the Win32 API: one ~2 MB executable for 64 or 32 bit, no
+Plain C++17 on the Win32 API: one ~2.5 MB executable for 64 or 32 bit, no
 framework, no runtime to install, no third-party libraries.
 
 <p>
@@ -25,7 +25,7 @@ framework, no runtime to install, no third-party libraries.
 - Flush the DNS cache, renew DHCP leases, open the classic Network Connections window, and open the Windows Wi-Fi picker from a Wi-Fi adapter.
 
 **Hosts**
-- A ping list with names and live state (green: reachable, red: not reachable, with round-trip time in the tooltip). The ping cycle is adjustable from 1 ms to 10 s.
+- A ping list with names and live state (green: reachable, red: not reachable, with round-trip time in the tooltip). The ping cycle is adjustable from 0.1 s to 30 s, and pinging can be turned off per host in its edit dialog or its right-click menu (the marker then stays grey).
 - Actions per host, started with one click:
   - **RDP** with a temporary `.rdp` file that holds the encrypted password (only clipboard redirection).
   - **SSH** in a console window with the Windows OpenSSH client, logged in with the stored password.
@@ -39,10 +39,10 @@ framework, no runtime to install, no third-party libraries.
   <img src="docs/action-dialog.png" alt="Action dialog" width="300">
 </p>
 
-**Subnet scan (optional, needs [nmap](https://nmap.org/download.html))**
-- Turn it on in the tray menu. Each IP address gets a scan button that offers an ARP scan, a ping scan or a TCP port check of its subnet (/24 or smaller).
+**Subnet scan**
+- Each IP address has a scan button that offers an ARP scan, a ping scan or a TCP port check of its subnet (/24 or smaller). It is built in: no nmap, no Npcap, no administrator rights needed.
 - Addresses are probed in parallel and the bottom bar shows the progress. The button turns into X while a scan runs, so you can stop it and still get the hosts found so far.
-- The result list is sorted by address and shows name, MAC and vendor. You can copy entries or add them to the ping list.
+- The result list is sorted by address and shows name (reverse DNS / NetBIOS), MAC and vendor (from the [IEEE OUI registry](https://standards-oui.ieee.org/), embedded in the exe). You can copy entries or add them to the ping list.
 
 <p>
   <img src="docs/scan-menu.png" alt="Scan menu on an IP address" width="440">
@@ -185,15 +185,14 @@ Passwords are encrypted with DPAPI. Remove that key to reset the app.
 |---|---|
 | Windows OpenSSH client (built into Windows 10/11, version 8.4 or later) | SSH actions |
 | [TightVNC viewer](https://www.tightvnc.com/) | VNC actions; set its path in the VNC action dialog |
-| [nmap](https://nmap.org/download.html) with [Npcap](https://npcap.com/) | subnet scans; ARP and ping scans need Npcap, the TCP port check works without it |
 
 ## Project layout
 
 | Path | Content |
 |---|---|
-| `src/` | the application (window, adapters, commands, ping, actions, nmap, settings) |
-| `res/` | dialogs, manifest, icon |
-| `cmake/`, `tools/` | signing step, certificate and icon scripts |
+| `src/` | the application (window, adapters, commands, ping, actions, subnet scan, settings) |
+| `res/` | dialogs, manifest, icon, MAC vendor table (`oui.bin`) |
+| `cmake/`, `tools/` | signing step, certificate, icon and vendor table scripts |
 | `docs/` | [design notes](docs/PLAN.md) and screenshots |
 
 ## License

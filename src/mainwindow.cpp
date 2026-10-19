@@ -15,7 +15,7 @@
 #include "starttask.h"
 #include "dialogs.h"
 #include "ipaddr.h"
-#include "nmap.h"
+#include "scan.h"
 #include "strutil.h"
 #include "theme.h"
 
@@ -57,7 +57,7 @@ constexpr wchar_t kGlyphHide = 0xED1A;  // crossed-out eye: hidden adapters are 
 
 enum : UINT {
     IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_CERT, IDM_TASK_SETUP, IDM_TASK_REMOVE, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
-    IDM_NMAP, IDM_NMAP_PATH, IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP, IDM_HIDE_ADAPTER,
+    IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP, IDM_HIDE_ADAPTER, IDM_HOST_PING,
     IDM_CYCLE_BASE = 200,
     IDM_DESIGN_BASE = 300,
     IDM_APPLY_PRESET_BASE = 1000,
@@ -436,7 +436,7 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         nid.hWnd = m_hwnd;
         nid.uID = kTrayId;
         Shell_NotifyIconW(NIM_DELETE, &nid);
-        if (m_scanCancel) *m_scanCancel = true;  // ends running nmap probes
+        if (m_scanCancel) *m_scanCancel = true;  // ends the running probes
         m_pinger.StopAll();
         m_monitor.Stop();
         if (m_job.joinable()) m_job.detach();  // main() ends the process right after the message loop
@@ -549,9 +549,12 @@ void MainWindow::BuildLayout() {
             r.host = i;
             r.text = host.name.empty() ? host.address : host.name;
             if (r.text != host.address) r.sub = host.address;
-            r.state = st.state == ping::State::Up ? theme::Green : st.state == ping::State::Down ? theme::Red
-                                                                                                 : theme::Grey;
-            r.tip = st.state == ping::State::Up     ? L"Reachable, " + std::to_wstring(st.rtt) + L" ms"
+            r.state = !host.ping                    ? theme::Grey
+                      : st.state == ping::State::Up   ? theme::Green
+                      : st.state == ping::State::Down ? theme::Red
+                                                      : theme::Grey;
+            r.tip = !host.ping                      ? std::wstring(L"Ping off")
+                    : st.state == ping::State::Up   ? L"Reachable, " + std::to_wstring(st.rtt) + L" ms"
                     : st.state == ping::State::Down ? std::wstring(L"Not reachable")
                                                     : std::wstring(L"Waiting for first reply");
             if (!r.sub.empty()) r.tip = host.address + L": " + r.tip;
@@ -656,12 +659,12 @@ void MainWindow::AddAdapterDetails(int ai) {
             m_rows.back().tip = L"Double-click to edit (switches DHCP off and keeps the other values as static)";
             m_rows.back().buttons.back().tip = L"Edit (switches DHCP off)";
         }
-        if (m_settings.nmapEnabled) {
+        {
             auto& b = m_rows.back().buttons;
             if (m_scanning && m_scanGuid == a.guid && m_scanIndex == k)
                 b.insert(b.begin(), {kGlyphClose, Cmd::StopScan, L"Stop the scan (keeps the hosts found so far)"});
             else
-                b.insert(b.begin(), {kGlyphScan, Cmd::ScanSubnet, L"Scan this subnet with nmap (ARP, ping or TCP port)"});
+                b.insert(b.begin(), {kGlyphScan, Cmd::ScanSubnet, L"Scan this subnet (ARP, ping or TCP port)"});
         }
     }
     newSlot(EditKind::NewAddress);
@@ -1168,6 +1171,7 @@ void MainWindow::OnRButtonUp(POINT pt) {
     POINT screen = pt;
     ClientToScreen(m_hwnd, &screen);
     if (r.kind == RowKind::Adapter) ShowAdapterMenu(r.adapter, screen);
+    else if (r.kind == RowKind::Host) ShowHostMenu(h.row, screen);
 }
 
 bool MainWindow::IsBlockedWhileBusy(Cmd cmd) const {
@@ -1272,13 +1276,15 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
     case Cmd::EditHost:
         if (host) {
             std::wstring name = host->name, address = host->address;
-            if (dialogs::EditHost(m_hwnd, name, address)) {
+            bool ping = host->ping;
+            if (dialogs::EditHost(m_hwnd, name, address, ping)) {
                 HostEntry& h = m_settings.hosts[row.host];
                 h.name = name;
                 if (h.address != address) {
                     h.address = address;
                     m_hostState[row.host] = {m_nextHostId++};  // new id restarts the ping worker
                 }
+                SetHostPing(row.host, ping);
                 settings::SaveHosts(m_settings.hosts);
                 SyncPinger();
                 Relayout();
@@ -1632,7 +1638,8 @@ void MainWindow::OnPing(uint32_t id, ping::State state, int rtt) {
 
 void MainWindow::SyncPinger() {
     std::vector<std::pair<uint32_t, std::wstring>> list;
-    for (size_t i = 0; i < m_settings.hosts.size(); ++i) list.emplace_back(m_hostState[i].id, m_settings.hosts[i].address);
+    for (size_t i = 0; i < m_settings.hosts.size(); ++i)
+        if (m_settings.hosts[i].ping) list.emplace_back(m_hostState[i].id, m_settings.hosts[i].address);
     m_pinger.Sync(list);
 }
 
@@ -1822,12 +1829,11 @@ void MainWindow::ShowTrayMenu() {
                 m_startTask > 0 ? L"Start without UAC prompt: change..." : L"Start without UAC prompt...");
     AppendMenuW(menu, MF_STRING | (m_startTask > 0 ? 0 : MF_GRAYED), IDM_TASK_REMOVE, L"Remove start without UAC prompt");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | (m_settings.nmapEnabled ? MF_CHECKED : 0), IDM_NMAP, L"nmap subnet scan");
-    if (m_settings.nmapEnabled) AppendMenuW(menu, MF_STRING, IDM_NMAP_PATH, L"Select nmap.exe...");
     const bool certInstalled = cert::HasEmbedded() && cert::IsInstalled();
-    if (cert::HasEmbedded())
+    if (cert::HasEmbedded()) {
         AppendMenuW(menu, MF_STRING | (certInstalled ? MF_CHECKED : 0), IDM_CERT, L"Trust signing certificate");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
     AppendMenuW(menu, MF_STRING, IDM_EXIT, L"Exit");
 
     POINT pt;
@@ -1859,10 +1865,6 @@ void MainWindow::ShowTrayMenu() {
         RemoveStartTask();
     } else if (id == IDM_CERT) {
         ToggleCertificate(certInstalled);
-    } else if (id == IDM_NMAP) {
-        ToggleNmap();
-    } else if (id == IDM_NMAP_PATH) {
-        SelectNmap();
     } else if (id >= IDM_DESIGN_BASE && id < IDM_DESIGN_BASE + (UINT)theme::kDesignCount) {
         m_settings.design = (int)(id - IDM_DESIGN_BASE);
         theme::Apply(m_settings.design);
@@ -1967,35 +1969,30 @@ void MainWindow::ShowAdapterMenu(int ai, POINT screen) {
     }
 }
 
-// ---- nmap subnet scans --------------------------------------------------
+void MainWindow::ShowHostMenu(int rowIndex, POINT screen) {
+    const Row row = m_rows[rowIndex];  // copy: a ping result may rebuild the rows while the menu is open
+    if (row.host < 0 || row.host >= (int)m_settings.hosts.size()) return;
 
-void MainWindow::ToggleNmap() {
-    if (m_settings.nmapEnabled) {
-        m_settings.nmapEnabled = false;
-        settings::SaveGeneral(m_settings);
-        return;
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING | (m_settings.hosts[row.host].ping ? MF_CHECKED : 0), IDM_HOST_PING, L"Ping");
+    UINT id = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, 0, m_hwnd, nullptr);
+    DestroyMenu(menu);
+
+    if (id == IDM_HOST_PING) {
+        SetHostPing(row.host, !m_settings.hosts[row.host].ping);
+        settings::SaveHosts(m_settings.hosts);
+        SyncPinger();
+        Relayout();
     }
-    DWORD attr = GetFileAttributesW(m_settings.nmapPath.c_str());
-    if (m_settings.nmapPath.empty() || attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY))
-        m_settings.nmapPath = nmap::Find();
-    if (m_settings.nmapPath.empty()) {
-        MessageBoxW(m_hwnd, L"nmap.exe was not found on PATH or in the default install folder. Install nmap adding it to PATH and/or select it next.",
-                    L"NIC Manager", MB_OK | MB_ICONINFORMATION);
-        if (!SelectNmap()) return;  // stays disabled
-    }
-    m_settings.nmapEnabled = true;
-    settings::SaveGeneral(m_settings);
-    SetStatus(L"Right-click an IP address to scan its subnet", theme::TextDim, 5000);
 }
 
-bool MainWindow::SelectNmap() {
-    std::wstring path = m_settings.nmapPath;
-    if (!dialogs::PickProgram(m_hwnd, L"Select nmap.exe", L"nmap (nmap.exe)\0nmap.exe\0Programs (*.exe)\0*.exe\0", path))
-        return false;
-    m_settings.nmapPath = path;
-    settings::SaveGeneral(m_settings);
-    return true;
+void MainWindow::SetHostPing(int i, bool on) {
+    if (m_settings.hosts[i].ping == on) return;
+    m_settings.hosts[i].ping = on;
+    m_hostState[i] = {m_nextHostId++};  // new id: a late reply from the old worker is ignored
 }
+
+// ---- subnet scans -------------------------------------------------------
 
 void MainWindow::ShowScanMenu(Adapter a, int index) {
     if (index < 0 || index >= (int)a.cfg.addresses.size()) return;
@@ -2006,11 +2003,11 @@ void MainWindow::ShowScanMenu(Adapter a, int index) {
     const uint32_t mask = prefix <= 0 ? 0 : 0xFFFFFFFFu << (32 - prefix);
     const uint32_t network = addr & mask;
     const std::wstring target = ip::FormatIpv4(network) + L"/" + std::to_wstring(prefix);
-    const bool tooLarge = prefix < nmap::kMinPrefix;
+    const bool tooLarge = prefix < scan::kMinPrefix;
     const UINT state = tooLarge ? MF_GRAYED : 0;
 
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, (L"Scan " + target + L" with nmap").c_str());
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, (L"Scan " + target).c_str());
     if (tooLarge)
         AppendMenuW(menu, MF_STRING | MF_GRAYED, 0,
                     (L"Subnet is larger than /24 (" + std::to_wstring(1ull << (32 - prefix)) + L" addresses); not scanned")
@@ -2024,8 +2021,8 @@ void MainWindow::ShowScanMenu(Adapter a, int index) {
     UINT id = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, m_hwnd, nullptr);
     DestroyMenu(menu);
 
-    if (id == IDM_SCAN_ARP) StartScan(a, index, nmap::Kind::Arp, network, prefix, 0);
-    else if (id == IDM_SCAN_PING) StartScan(a, index, nmap::Kind::Ping, network, prefix, 0);
+    if (id == IDM_SCAN_ARP) StartScan(a, index, scan::Kind::Arp, network, prefix, 0);
+    else if (id == IDM_SCAN_PING) StartScan(a, index, scan::Kind::Ping, network, prefix, 0);
     else if (id == IDM_SCAN_TCP) {
         static std::wstring lastPort = L"22";
         auto text = dialogs::PromptText(m_hwnd, L"TCP port check", L"Hosts in " + target + L" with this TCP port open:",
@@ -2041,21 +2038,22 @@ void MainWindow::ShowScanMenu(Adapter a, int index) {
                                         });
         if (!text) return;
         lastPort = *text;
-        StartScan(a, index, nmap::Kind::Tcp, network, prefix, _wtoi(text->c_str()));
+        StartScan(a, index, scan::Kind::Tcp, network, prefix, _wtoi(text->c_str()));
     }
 }
 
-void MainWindow::StartScan(const Adapter& a, int index, nmap::Kind kind, uint32_t network, int prefix, int port) {
+void MainWindow::StartScan(const Adapter& a, int index, scan::Kind kind, uint32_t network, int prefix, int port) {
     if (m_busy) {
         MessageBeep(MB_OK);
         return;
     }
     const std::wstring target = ip::FormatIpv4(network) + L"/" + std::to_wstring(prefix);
     const std::wstring what =
-        kind == nmap::Kind::Tcp ? L"TCP port " + std::to_wstring(port) : std::wstring(nmap::KindName(kind));
-    auto result = std::make_shared<nmap::ScanResult>();
+        kind == scan::Kind::Tcp ? L"TCP port " + std::to_wstring(port) : std::wstring(scan::KindName(kind));
+    auto result = std::make_shared<scan::ScanResult>();
     auto cancel = std::make_shared<std::atomic<bool>>(false);
-    const std::wstring exe = m_settings.nmapPath;
+    uint32_t source = 0;
+    ip::ParseIpv4(a.cfg.addresses[index].ip, &source);
     const bool demo = m_demo;
     const HWND hwnd = m_hwnd;
 
@@ -2065,8 +2063,7 @@ void MainWindow::StartScan(const Adapter& a, int index, nmap::Kind kind, uint32_
     m_scanCancel = cancel;
 
     JobOptions opts;
-    opts.timeoutMs = nmap::kScanTimeoutMs;
-    opts.adminHint = kind != nmap::Kind::Tcp;
+    opts.timeoutMs = scan::kScanTimeoutMs;
     opts.simulateInDemo = false;
     opts.onSuccess = [this, result, kind, target, what, port] {
         const auto& r = *result;
@@ -2074,7 +2071,7 @@ void MainWindow::StartScan(const Adapter& a, int index, nmap::Kind kind, uint32_
         for (const auto& h : r.hosts) rows.push_back({ip::FormatIpv4(h.ip), h.name, h.mac, h.vendor});
         std::wstring summary = std::to_wstring(r.hosts.size()) + (r.hosts.size() == 1 ? L" host" : L" hosts") +
                                L" in " + target +
-                               (kind == nmap::Kind::Tcp ? L" with TCP port " + std::to_wstring(port) + L" open"
+                               (kind == scan::Kind::Tcp ? L" with TCP port " + std::to_wstring(port) + L" open"
                                                         : L" answered the " + what + L" scan");
         if (r.cancelled || r.timedOut)
             summary += L" (" + std::wstring(r.cancelled ? L"stopped" : L"time limit reached") + L" after " +
@@ -2109,8 +2106,8 @@ void MainWindow::StartScan(const Adapter& a, int index, nmap::Kind kind, uint32_
                auto progress = [hwnd](int done, int total) {
                    PostMessageW(hwnd, WM_APP_SCANPROGRESS, (WPARAM)done, (LPARAM)total);
                };
-               if (demo) {  // sample hosts, no nmap
-                   auto targets = nmap::Targets(network, prefix);
+               if (demo) {  // sample hosts, no probes
+                   auto targets = scan::Targets(network, prefix);
                    result->total = (int)targets.size();
                    for (uint32_t t : targets) {
                        if (*cancel) {
@@ -2120,22 +2117,22 @@ void MainWindow::StartScan(const Adapter& a, int index, nmap::Kind kind, uint32_
                        Sleep(25);
                        uint32_t h = t - network;
                        if (h == 1 || h == 7 || h == 23 || h == 50 || h == 101 || h == 254) {
-                           nmap::Host x;
+                           scan::Host x;
                            x.ip = t;
-                           if (kind == nmap::Kind::Arp) {
+                           if (kind == scan::Kind::Arp) {
                                wchar_t mac[18];
                                swprintf_s(mac, L"3C:52:82:1F:%02X:%02X", (h * 37) & 0xFF, h & 0xFF);
                                x.mac = mac;
                                x.vendor = h == 1 ? L"AVM GmbH" : L"Hewlett Packard";
                            }
                            if (h == 1) x.name = L"fritz.box";
-                           if (kind != nmap::Kind::Tcp || h % 2 == 1) result->hosts.push_back(x);
+                           if (kind != scan::Kind::Tcp || h % 2 == 1) result->hosts.push_back(x);
                        }
                        progress(++result->done, result->total);
                    }
                    return netcmd::JobResult{};
                }
-               return nmap::Scan(exe, kind, network, prefix, port, dl, *cancel, progress, *result);
+               return scan::Scan(kind, network, prefix, source, port, dl, *cancel, progress, *result);
            },
            std::move(opts));
     Relayout();  // the scan button becomes a stop button

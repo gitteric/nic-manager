@@ -1,7 +1,7 @@
-// Subnet scans with nmap (https://nmap.org): ARP, ICMP echo or a TCP port.
-// Every address gets its own short nmap run (one probe, no retries), several
-// at a time, so progress is visible and a scan can stop with partial results.
-// Scan() blocks and is meant for a worker thread.
+// Subnet scans without external tools: ARP requests (SendARP), ICMP echo or
+// a TCP connect per address, many addresses at a time. Hosts found get a
+// MAC address (ARP table), a vendor (embedded IEEE OUI list) and a reverse
+// DNS / NetBIOS name. Scan() blocks and is meant for a worker thread.
 #pragma once
 
 #include <windows.h>
@@ -14,7 +14,7 @@
 
 #include "netcmd.h"
 
-namespace nmap {
+namespace scan {
 
 enum class Kind { Arp, Ping, Tcp };
 
@@ -29,12 +29,9 @@ struct ScanResult {
     bool cancelled = false, timedOut = false;
 };
 
-constexpr int kMinPrefix = 24;           // larger subnets are not scanned
-constexpr int kParallel = 16;            // nmap processes at a time
+constexpr int kMinPrefix = 24;  // larger subnets are not scanned
+constexpr int kParallel = 64;   // probes at a time
 constexpr DWORD kScanTimeoutMs = 180000;
-
-// nmap.exe on PATH or in the default install folders; empty if not found.
-std::wstring Find();
 
 const wchar_t* KindName(Kind kind);  // "ARP", "ping", "TCP"
 
@@ -42,11 +39,15 @@ const wchar_t* KindName(Kind kind);  // "ARP", "ping", "TCP"
 // broadcast address below /31.
 std::vector<uint32_t> Targets(uint32_t network, int prefix);
 
-// Scans network/prefix (host byte order). `progress(done, total)` is called
-// from worker threads. Fails only on nmap errors (e.g. missing Npcap);
-// cancel and timeout end the scan with what was found so far.
-netcmd::JobResult Scan(const std::wstring& exe, Kind kind, uint32_t network, int prefix, int port,
+// Vendor for a MAC address ("AA:BB:CC:..."), empty if unknown.
+std::wstring Vendor(const std::wstring& mac);
+
+// Scans network/prefix (host byte order). `source` is the adapter's own
+// address in that subnet; ARP requests go out from it. `progress(done,
+// total)` is called from worker threads. Cancel and timeout end the scan
+// with what was found so far.
+netcmd::JobResult Scan(Kind kind, uint32_t network, int prefix, uint32_t source, int port,
                        const netcmd::Deadline& dl, const std::atomic<bool>& cancel,
                        const std::function<void(int, int)>& progress, ScanResult& out);
 
-}  // namespace nmap
+}  // namespace scan

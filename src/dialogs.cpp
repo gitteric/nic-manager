@@ -151,6 +151,7 @@ INT_PTR CALLBACK StartTaskProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
 struct HostData {
     std::wstring* name;
     std::wstring* address;
+    bool* ping;
 };
 
 INT_PTR CALLBACK HostProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
@@ -161,6 +162,7 @@ INT_PTR CALLBACK HostProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         SetWindowLongPtrW(dlg, DWLP_USER, lp);
         SetDlgItemTextW(dlg, IDC_HOST_NAME, d->name->c_str());
         SetDlgItemTextW(dlg, IDC_HOST, d->address->c_str());
+        CheckDlgButton(dlg, IDC_HOST_PING, *d->ping ? BST_CHECKED : BST_UNCHECKED);
         InitDark(dlg);
         SetFocus(GetDlgItem(dlg, IDC_HOST_NAME));
         SendDlgItemMessageW(dlg, IDC_HOST_NAME, EM_SETSEL, 0, -1);
@@ -174,6 +176,7 @@ INT_PTR CALLBACK HostProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             }
             *d->name = name.empty() ? address : name;
             *d->address = address;
+            *d->ping = IsDlgButtonChecked(dlg, IDC_HOST_PING) == BST_CHECKED;
             EndDialog(dlg, IDOK);
         } else if (LOWORD(wp) == IDCANCEL) {
             EndDialog(dlg, IDCANCEL);
@@ -559,21 +562,6 @@ INT_PTR CALLBACK ListProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
 
 }  // namespace
 
-bool PickProgram(HWND owner, const wchar_t* title, const wchar_t* filter, std::wstring& path) {
-    wchar_t buf[MAX_PATH] = {};
-    wcsncpy_s(buf, path.c_str(), _TRUNCATE);
-    OPENFILENAMEW ofn{sizeof(ofn)};
-    ofn.hwndOwner = owner;
-    ofn.lpstrTitle = title;
-    ofn.lpstrFilter = filter;
-    ofn.lpstrFile = buf;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!GetOpenFileNameW(&ofn)) return false;
-    path = buf;
-    return true;
-}
-
 void ShowList(HWND owner, const std::wstring& caption, const std::wstring& summary,
               const std::vector<std::vector<std::wstring>>& rows, AddRows addRows) {
     ListData d{caption, summary, &rows, std::move(addRows)};
@@ -602,13 +590,15 @@ bool AskStartTask(HWND owner, bool& autostart, bool& shortcut) {
                            (LPARAM)&d) == IDOK;
 }
 
-bool EditHost(HWND owner, std::wstring& name, std::wstring& address) {
+bool EditHost(HWND owner, std::wstring& name, std::wstring& address, bool& ping) {
     std::wstring n = name, a = address;
-    HostData d{&n, &a};
+    bool p = ping;
+    HostData d{&n, &a, &p};
     if (DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_HOST), owner, HostProc, (LPARAM)&d) != IDOK)
         return false;
     name = n;
     address = a;
+    ping = p;
     return true;
 }
 

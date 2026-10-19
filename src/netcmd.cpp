@@ -73,7 +73,7 @@ bool Netsh(JobResult& job, const std::wstring& args, const Deadline& dl, bool ig
 
 namespace {
 // Child processes go into a job that Windows kills when NIC Manager exits
-// (the handle closes with the process), so nmap or netsh never outlive it.
+// (the handle closes with the process), so netsh and friends never outlive it.
 HANDLE ChildJob() {
     static HANDLE job = [] {
         HANDLE j = CreateJobObjectW(nullptr, nullptr);

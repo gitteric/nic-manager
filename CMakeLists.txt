@@ -46,7 +46,7 @@ add_executable(NicManager WIN32
     src/actions.cpp
     src/cert.cpp
     src/starttask.cpp
-    src/nmap.cpp
+    src/scan.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/app.rc
 )
 target_include_directories(NicManager PRIVATE src res)
@@ -60,7 +60,7 @@ target_link_libraries(NicManager PRIVATE
     iphlpapi ws2_32 setupapi cfgmgr32 comctl32 comdlg32 shell32 advapi32 crypt32 uxtheme dwmapi ole32 uuid)
 
 set_property(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/app.rc APPEND PROPERTY OBJECT_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/res/app.ico")
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/app.ico;${CMAKE_CURRENT_SOURCE_DIR}/res/oui.bin")
 if(EXISTS "${NICMGR_CERT}")
     target_compile_definitions(NicManager PRIVATE NICMGR_HAS_CERT=1)
     set_property(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/app.rc APPEND PROPERTY OBJECT_DEPENDS "${NICMGR_CERT}")
