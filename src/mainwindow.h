@@ -209,6 +209,8 @@ private:
     int m_trayRetries = 0;       // failed tray icon adds so far (see AddTrayIcon)
     bool m_dragScroll = false;
     int m_dragStartY = 0, m_dragStartScroll = 0;
+    RECT m_dragStartRect{};      // window rect and cursor when a window move starts (WM_MOVING)
+    POINT m_dragStartCursor{};
     std::wstring m_tipText;
 
     EditTarget m_editTarget;

@@ -305,12 +305,24 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         return hit;
     }
+    case WM_ENTERSIZEMOVE:
+        GetWindowRect(m_hwnd, &m_dragStartRect);
+        GetCursorPos(&m_dragStartCursor);
+        return 0;
     case WM_MOVING: {
         // Keep the window inside the work area of the monitor under the
-        // cursor and snap it to that area's edges.
+        // cursor and snap it to that area's edges. The position comes from
+        // the drag start plus the total cursor offset: Windows only adds the
+        // latest small mouse step to the (snapped) rect it got back, so slow
+        // drags would be pulled back to the edge on every step.
         RECT* r = reinterpret_cast<RECT*>(lp);
         POINT cur;
         GetCursorPos(&cur);
+        const int curW = r->right - r->left, curH = r->bottom - r->top;  // size may change while dragging
+        r->left = m_dragStartRect.left + cur.x - m_dragStartCursor.x;
+        r->top = m_dragStartRect.top + cur.y - m_dragStartCursor.y;
+        r->right = r->left + curW;
+        r->bottom = r->top + curH;
         MONITORINFO mi{sizeof(mi)};
         GetMonitorInfoW(MonitorFromPoint(cur, MONITOR_DEFAULTTONEAREST), &mi);
         const RECT& work = mi.rcWork;
