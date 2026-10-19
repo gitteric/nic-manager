@@ -28,7 +28,17 @@ HBRUSH FieldBrush() {
 BOOL CALLBACK ThemeChild(HWND child, LPARAM) {
     wchar_t cls[32] = {};
     GetClassNameW(child, cls, 32);
-    if (_wcsicmp(cls, L"Button") == 0 || _wcsicmp(cls, L"ListBox") == 0)
+    const LONG type = GetWindowLongW(child, GWL_STYLE) & BS_TYPEMASK;
+    const bool checkLike = _wcsicmp(cls, L"Button") == 0 &&
+                           (type == BS_CHECKBOX || type == BS_AUTOCHECKBOX || type == BS_3STATE ||
+                            type == BS_AUTO3STATE || type == BS_RADIOBUTTON || type == BS_AUTORADIOBUTTON ||
+                            type == BS_GROUPBOX);
+    // A themed check box draws its label with the theme's text colour, which
+    // on many Windows builds is black even under DarkMode_Explorer (black on
+    // our dark background). Unthemed, it takes the colour from WM_CTLCOLORSTATIC.
+    if (checkLike)
+        SetWindowTheme(child, L"", L"");
+    else if (_wcsicmp(cls, L"Button") == 0 || _wcsicmp(cls, L"ListBox") == 0)
         SetWindowTheme(child, L"DarkMode_Explorer", nullptr);
     else if (_wcsicmp(cls, L"Edit") == 0 || _wcsicmp(cls, L"ComboBox") == 0)
         SetWindowTheme(child, L"DarkMode_CFD", nullptr);
@@ -41,7 +51,7 @@ INT_PTR DarkColors(UINT msg, WPARAM wp) {
     switch (msg) {
     case WM_CTLCOLORDLG: return (INT_PTR)BgBrush();
     case WM_CTLCOLORSTATIC:
-        SetTextColor(dc, theme::TextDim);
+        SetTextColor(dc, theme::TextDim);  // labels and (unthemed) check boxes
         SetBkColor(dc, theme::Bg);
         return (INT_PTR)BgBrush();
     case WM_CTLCOLOREDIT:

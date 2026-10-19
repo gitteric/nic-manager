@@ -39,6 +39,7 @@ inline std::wstring Trim(const std::wstring& s) {
 
 inline std::wstring FormatMs(DWORD ms) {
     if (ms >= 1000 && ms % 1000 == 0) return std::to_wstring(ms / 1000) + L" s";
+    if (ms >= 100 && ms % 100 == 0) return std::to_wstring(ms / 1000) + L"." + std::to_wstring(ms % 1000 / 100) + L" s";
     return std::to_wstring(ms) + L" ms";
 }
 

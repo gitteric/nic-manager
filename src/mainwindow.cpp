@@ -59,9 +59,10 @@ enum : UINT {
     IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_CERT, IDM_TASK_SETUP, IDM_TASK_REMOVE, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
     IDM_NMAP, IDM_NMAP_PATH, IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP, IDM_HIDE_ADAPTER,
     IDM_CYCLE_BASE = 200,
+    IDM_DESIGN_BASE = 300,
     IDM_APPLY_PRESET_BASE = 1000,
 };
-constexpr DWORD kCycleChoices[] = {100, 250, 500, 1000, 2000, 5000, 10000};
+constexpr DWORD kCycleChoices[] = {500, 1000, 5000, 10000, 30000};
 
 void Fill(HDC dc, const RECT& rc, COLORREF c) {
     SetDCBrushColor(dc, c);
@@ -137,6 +138,7 @@ bool MainWindow::Create(HINSTANCE inst, bool demo, bool minimized) {
     m_inst = inst;
     m_demo = demo;
     m_settings = settings::Load();
+    theme::Apply(m_settings.design);
     m_expandedAdapter = m_settings.expandedAdapter;  // dropped on the first adapter list if it is gone
     m_elevated = netcmd::IsElevated();
     for (size_t i = 0; i < m_settings.hosts.size(); ++i) m_hostState.push_back({m_nextHostId++});
@@ -1796,6 +1798,12 @@ void MainWindow::ShowTrayMenu() {
 
     AppendMenuW(menu, MF_STRING | (m_settings.alwaysOnTop ? MF_CHECKED : 0), IDM_TOPMOST, L"Always on top");
     AppendMenuW(menu, MF_STRING | (m_settings.minimizeToTray ? MF_CHECKED : 0), IDM_TO_TRAY, L"Minimize to tray");
+    HMENU design = CreatePopupMenu();
+    for (int i = 0; i < theme::kDesignCount; ++i)
+        AppendMenuW(design, MF_STRING, IDM_DESIGN_BASE + i, theme::kDesigns[i].name);
+    CheckMenuRadioItem(design, IDM_DESIGN_BASE, IDM_DESIGN_BASE + theme::kDesignCount - 1,
+                       IDM_DESIGN_BASE + std::clamp(m_settings.design, 0, theme::kDesignCount - 1), MF_BYCOMMAND);
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(design), L"Design");
     if (m_startTask < 0) m_startTask = starttask::IsInstalled() ? (starttask::AutostartInstalled() ? 2 : 1) : 0;
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (m_startTask > 0 ? MF_CHECKED : 0), IDM_TASK_SETUP,
@@ -1843,6 +1851,12 @@ void MainWindow::ShowTrayMenu() {
         ToggleNmap();
     } else if (id == IDM_NMAP_PATH) {
         SelectNmap();
+    } else if (id >= IDM_DESIGN_BASE && id < IDM_DESIGN_BASE + (UINT)theme::kDesignCount) {
+        m_settings.design = (int)(id - IDM_DESIGN_BASE);
+        theme::Apply(m_settings.design);
+        settings::SaveGeneral(m_settings);
+        Relayout();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
     } else if (id == IDM_TO_TRAY) {
         m_settings.minimizeToTray = !m_settings.minimizeToTray;
         settings::SaveGeneral(m_settings);
@@ -1850,18 +1864,31 @@ void MainWindow::ShowTrayMenu() {
     } else if (id >= IDM_CYCLE_BASE && id < IDM_CYCLE_BASE + sizeof(kCycleChoices) / sizeof(kCycleChoices[0])) {
         setCycle(kCycleChoices[id - IDM_CYCLE_BASE]);
     } else if (id == IDM_CYCLE_CUSTOM) {
+        // Seconds with one decimal, "." or "," as separator: "0.5", "2", "12,5".
+        auto parseSeconds = [](const std::wstring& s) -> DWORD {
+            DWORD whole = 0, tenth = 0;
+            size_t i = 0, digits = 0;
+            for (; i < s.size() && iswdigit(s[i]) && digits < 3; ++i, ++digits) whole = whole * 10 + (s[i] - L'0');
+            if (digits == 0) return 0;
+            if (i < s.size() && (s[i] == L'.' || s[i] == L',')) {
+                if (++i < s.size() && iswdigit(s[i])) tenth = s[i++] - L'0';
+                else if (i < s.size()) return 0;
+            }
+            return i == s.size() ? whole * 1000 + tenth * 100 : 0;
+        };
+        std::wstring init = std::to_wstring(cur / 1000);
+        if (cur % 1000) init += L"." + std::to_wstring(cur % 1000 / 100);
         auto text = dialogs::PromptText(
-            m_hwnd, L"Ping cycle", L"Interval per host in milliseconds (1 - 10000):", std::to_wstring(cur),
-            [](const std::wstring& s, std::wstring& err) {
-                bool digits = !s.empty() && s.size() <= 5 && std::all_of(s.begin(), s.end(), iswdigit);
-                int v = digits ? _wtoi(s.c_str()) : 0;
-                if (v < (int)settings::kMinPingCycleMs || v > (int)settings::kMaxPingCycleMs) {
-                    err = L"Enter a number between 1 and 10000.";
+            m_hwnd, L"Ping cycle", L"Interval per host in seconds (0.1 - 30.0):", init,
+            [&](const std::wstring& s, std::wstring& err) {
+                DWORD v = parseSeconds(s);
+                if (v < settings::kMinPingCycleMs || v > settings::kMaxPingCycleMs) {
+                    err = L"Enter seconds between 0.1 and 30.0 (one decimal).";
                     return false;
                 }
                 return true;
             });
-        if (text) setCycle((DWORD)_wtoi(text->c_str()));
+        if (text) setCycle(parseSeconds(*text));
     }
 }
 

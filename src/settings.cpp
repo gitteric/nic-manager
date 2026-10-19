@@ -315,6 +315,7 @@ AppSettings Load() {
         pos = end + 1;
     }
     s.showHidden = ReadDword(L"ShowHidden", 0) != 0;
+    s.design = (int)ReadDword(L"Design", 0);
 
     json::Value hosts;
     if (json::Parse(WideToUtf8(ReadString(L"Hosts")), hosts) && hosts.IsArray()) s.hosts = HostsFromJson(hosts);
@@ -331,6 +332,7 @@ void SaveGeneral(const AppSettings& s) {
         WriteDword(key, L"MinimizeToTray", s.minimizeToTray ? 1 : 0);
         WriteDword(key, L"NmapEnabled", s.nmapEnabled ? 1 : 0);
         WriteDword(key, L"ShowHidden", s.showHidden ? 1 : 0);
+        WriteDword(key, L"Design", (DWORD)s.design);
         RegCloseKey(key);
     }
     WriteString(L"NmapPath", s.nmapPath);
