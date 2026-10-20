@@ -42,10 +42,10 @@ private:
         EditAddr, DelAddr, AddAddr, EditGw, DelGw, AddGw, EditDns, DelDns, AddDns,
         AddHost, EditHost, DelHost, AddAction, RunAction, EditAction, DelAction,
         OpenNcpa, OpenWifi, FlushDns, RenewDhcp, Hide, Exit, Minimize, ScanSubnet, StopScan,
-        ToggleShowHidden,
+        ToggleShowHidden, AddGroup, AddGroupHost, EditGroup, DelGroup, ExpandGroup,
     };
-    enum class EditKind { None, Address, NewAddress, Gateway, NewGateway, Dns, NewDns, Host, NewHost };
-    enum class RowKind { Header, Adapter, Toggle, Caption, Value, Host, Action, Hint };
+    enum class EditKind { None, Address, NewAddress, Gateway, NewGateway, Dns, NewDns, Host, NewHost, NewGroup };
+    enum class RowKind { Header, Adapter, Toggle, Caption, Value, Host, Action, Hint, Group };
 
     struct Button {
         wchar_t glyph;
@@ -57,6 +57,9 @@ private:
         RowKind kind = RowKind::Hint;
         int y = 0, h = 0;              // content coordinates
         int adapter = -1, host = -1, index = -1;
+        int group = -1;                // host group (group rows, new-host slot)
+        int level = 0;                 // 1: inside a host group (indented)
+        bool hostsHeader = false;      // the HOSTS header (drop target for the top level)
         std::wstring text, sub, tip;
         COLORREF state = 0;            // colour bar for adapters/hosts
         bool dim = false, expanded = false, chevron = false, hoverButtons = false;
@@ -73,17 +76,27 @@ private:
         EditKind kind = EditKind::None;
         std::wstring guid;  // adapter
         int host = -1;
-        int index = -1;
+        int index = -1;  // NewHost: group to add to (-1 top level)
         bool fromDhcp = false;  // committing switches DHCP off (other leased values stay as static)
     };
     struct Metrics {
         int width, title, bottom, header, adapter, host, toggle, caption, value, action, hint;
         int pad, indent, btn, bar, scrollW, editH, switchW, switchH, chevron;
+        int groupIndent;  // hosts inside a group
+        int folderText;   // group name, right of the folder glyph
     };
     struct HostState {
         uint32_t id = 0;
         ping::State state = ping::State::Unknown;
         int rtt = 0;
+    };
+    // Where a dragged host lands: moved to index `pos` (before removal) in group `group`.
+    struct Drop {
+        bool valid = false;
+        int group = -1;
+        int pos = 0;
+        int lineY = -1;         // content y of the insertion line, -1: none
+        int highlightRow = -1;  // group row dropped onto
     };
     struct Hit {
         int fixed = -1;   // index into m_fixed
@@ -151,6 +164,13 @@ private:
     void OnAdapters(std::vector<Adapter>* list);
     void OnPing(uint32_t id, ping::State state, int rtt);
     void SyncPinger();
+    void SaveHosts();
+    bool HostPings(int i) const;  // its own switch and its group's
+    void EraseHost(int i);
+    void DeleteGroup(int g);
+    Drop DropAt(POINT pt) const;
+    void MoveHost(int src, const Drop& d);
+    void CancelHostDrag();
     void SetStatus(const std::wstring& text, COLORREF color, UINT ms = 4000);
     // Error strip above the bottom bar; hides itself after a few seconds.
     bool EditActionDialog(HostAction& act, const std::wstring& hostAddress, bool isNew);
@@ -161,7 +181,7 @@ private:
     // menus
     void ShowTrayMenu();
     void ShowAdapterMenu(int ai, POINT screen);
-    void ShowHostMenu(int rowIndex, POINT screen);
+    void ShowHostMenu(int rowIndex, POINT screen);  // host or group row: ping on/off
     void SetHostPing(int i, bool on);  // caller saves and syncs the pinger
     void ShowWindowNear(bool show = true);
     void ToggleVisible();
@@ -197,6 +217,11 @@ private:
     bool m_adaptersLoaded = false;
     std::wstring m_expandedAdapter;
     int m_expandedHost = -1;
+    // Host drag and drop: armed on a press on a host row, active past the drag threshold.
+    int m_dragHost = -1;
+    bool m_draggingHost = false;
+    POINT m_dragHostStart{};
+    Drop m_drop;
     std::vector<HostState> m_hostState;
     uint32_t m_nextHostId = 1;
 

@@ -23,6 +23,8 @@ bool AskStartTask(HWND owner, bool& autostart, bool& shortcut);
 
 // Name and address of a host entry; an empty name becomes the address.
 bool EditHost(HWND owner, std::wstring& name, std::wstring& address, bool& ping);
+// Group name and its ping switch (ANDed with each member host's).
+bool EditGroup(HWND owner, std::wstring& name, bool& ping);
 
 // Edits `action` in place; returns false on cancel. Actions connect to
 // `hostAddress` (shown read-only; the browser URL is preset to it).

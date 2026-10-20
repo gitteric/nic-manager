@@ -158,6 +158,7 @@ json::Value HostsToJson(const std::vector<HostEntry>& hosts) {
         o.Set("name", Str(h.name));
         o.Set("address", Str(h.address));
         o.Set("ping", h.ping);
+        if (h.group >= 0) o.Set("group", h.group);
         json::Value acts = json::Value::Array();
         for (const auto& a : h.actions) {
             json::Value j = json::Value::Object();
@@ -196,6 +197,7 @@ std::vector<HostEntry> HostsFromJson(const json::Value& arr) {
         h.name = Trim(WStr(o["name"]));
         if (h.name.empty()) h.name = h.address;
         h.ping = o["ping"].AsBool(true);
+        h.group = o["group"].AsInt(-1);
         for (const auto& j : o["actions"].Items()) {
             std::string type = j["type"].AsString();
             HostAction a;
@@ -317,8 +319,18 @@ AppSettings Load() {
     s.showHidden = ReadDword(L"ShowHidden", 0) != 0;
     s.design = (int)ReadDword(L"Design", 0);
 
-    json::Value hosts;
+    json::Value hosts, groups;
     if (json::Parse(WideToUtf8(ReadString(L"Hosts")), hosts) && hosts.IsArray()) s.hosts = HostsFromJson(hosts);
+    if (json::Parse(WideToUtf8(ReadString(L"HostGroups")), groups) && groups.IsArray())
+        for (const auto& o : groups.Items()) {
+            HostGroup g;
+            g.name = Trim(WStr(o["name"]));
+            g.ping = o["ping"].AsBool(true);
+            g.expanded = o["expanded"].AsBool(true);
+            s.groups.push_back(std::move(g));
+        }
+    for (auto& h : s.hosts)
+        if (h.group < -1 || h.group >= (int)s.groups.size()) h.group = -1;  // dangling reference: top level
     PresetsFromJson(WideToUtf8(ReadString(L"Presets")), s.presets, nullptr);
     return s;
 }
@@ -336,8 +348,17 @@ void SaveGeneral(const AppSettings& s) {
     }
 }
 
-void SaveHosts(const std::vector<HostEntry>& hosts) {
+void SaveHosts(const std::vector<HostEntry>& hosts, const std::vector<HostGroup>& groups) {
     WriteString(L"Hosts", Utf8ToWide(json::Write(HostsToJson(hosts), false)));
+    json::Value arr = json::Value::Array();
+    for (const auto& g : groups) {
+        json::Value o = json::Value::Object();
+        o.Set("name", Str(g.name));
+        o.Set("ping", g.ping);
+        o.Set("expanded", g.expanded);
+        arr.Push(std::move(o));
+    }
+    WriteString(L"HostGroups", Utf8ToWide(json::Write(arr, false)));
 }
 
 void SavePresets(const std::vector<Preset>& presets) { WriteString(L"Presets", Utf8ToWide(PresetsToJson(presets))); }

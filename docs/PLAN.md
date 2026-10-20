@@ -182,7 +182,8 @@ Behaviour I chose where your list left it open:
 | `HiddenAdapters` | SZ | GUIDs of hidden adapters, `;`-separated (adapter context menu "Hidden") |
 | `ShowHidden` | DWORD | 0/1, bottom bar eye button: list hidden adapters anyway, dimmed |
 | `Design` | DWORD | tray menu Design: 0 Standard (green/red), 1 Color-blind friendly (blue/orange) |
-| `Hosts` | SZ | JSON: hosts (name, address, ping on/off) and their actions, which connect to the host address; passwords DPAPI-encrypted (`"dpapi:…"`) |
+| `HostGroups` | SZ | JSON: host groups (name, ping on/off, expanded); hosts refer to them by index |
+| `Hosts` | SZ | JSON: hosts (name, address, ping on/off, group index) and their actions, which connect to the host address; passwords DPAPI-encrypted (`"dpapi:…"`) |
 | `Presets` | SZ | JSON, the same format as the export file |
 
 Preset export file:

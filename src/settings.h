@@ -10,6 +10,7 @@
 //   ShowHidden   REG_DWORD  0/1 (1: hidden adapters are listed anyway, dimmed)
 //   Design       REG_DWORD  index into theme::kDesigns (0 Standard, 1 Color-blind friendly)
 //   Hosts        REG_SZ     JSON array of hosts + actions (passwords DPAPI-encrypted)
+//   HostGroups   REG_SZ     JSON array of host groups (name, ping, expanded); hosts refer to them by index
 //   Presets      REG_SZ     JSON document of IPv4 presets (same format as export files)
 #pragma once
 
@@ -33,6 +34,7 @@ struct AppSettings {
     bool showHidden = false;
     int design = 0;
     std::vector<HostEntry> hosts;
+    std::vector<HostGroup> groups;
     std::vector<Preset> presets;
 };
 
@@ -43,7 +45,7 @@ constexpr DWORD kMaxPingCycleMs = 30000;
 
 AppSettings Load();
 void SaveGeneral(const AppSettings& s);  // cycle, window position, flags, show hidden, design
-void SaveHosts(const std::vector<HostEntry>& hosts);
+void SaveHosts(const std::vector<HostEntry>& hosts, const std::vector<HostGroup>& groups);
 void SavePresets(const std::vector<Preset>& presets);
 void SaveTightVncPath(const std::wstring& path);
 void SaveExpandedAdapter(const std::wstring& guid);  // empty: none

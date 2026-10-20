@@ -146,6 +146,43 @@ INT_PTR CALLBACK StartTaskProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     return DarkColors(msg, wp);
 }
 
+// ---- host group ---------------------------------------------------------
+
+struct GroupData {
+    std::wstring* name;
+    bool* ping;
+};
+
+INT_PTR CALLBACK GroupProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* d = reinterpret_cast<GroupData*>(GetWindowLongPtrW(dlg, DWLP_USER));
+    switch (msg) {
+    case WM_INITDIALOG:
+        d = reinterpret_cast<GroupData*>(lp);
+        SetWindowLongPtrW(dlg, DWLP_USER, lp);
+        SetDlgItemTextW(dlg, IDC_HOST_NAME, d->name->c_str());
+        CheckDlgButton(dlg, IDC_HOST_PING, *d->ping ? BST_CHECKED : BST_UNCHECKED);
+        InitDark(dlg);
+        SetFocus(GetDlgItem(dlg, IDC_HOST_NAME));
+        SendDlgItemMessageW(dlg, IDC_HOST_NAME, EM_SETSEL, 0, -1);
+        return FALSE;
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDOK) {
+            std::wstring name = ItemText(dlg, IDC_HOST_NAME);
+            if (name.empty()) {
+                Warn(dlg, IDC_HOST_NAME, L"Enter a name for the group.");
+                return TRUE;
+            }
+            *d->name = name;
+            *d->ping = IsDlgButtonChecked(dlg, IDC_HOST_PING) == BST_CHECKED;
+            EndDialog(dlg, IDOK);
+        } else if (LOWORD(wp) == IDCANCEL) {
+            EndDialog(dlg, IDCANCEL);
+        }
+        return TRUE;
+    }
+    return DarkColors(msg, wp);
+}
+
 // ---- host entry ---------------------------------------------------------
 
 struct HostData {
@@ -588,6 +625,17 @@ bool AskStartTask(HWND owner, bool& autostart, bool& shortcut) {
     StartTaskData d{&autostart, &shortcut};
     return DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_STARTTASK), owner, StartTaskProc,
                            (LPARAM)&d) == IDOK;
+}
+
+bool EditGroup(HWND owner, std::wstring& name, bool& ping) {
+    std::wstring n = name;
+    bool p = ping;
+    GroupData d{&n, &p};
+    if (DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_GROUP), owner, GroupProc, (LPARAM)&d) != IDOK)
+        return false;
+    name = n;
+    ping = p;
+    return true;
 }
 
 bool EditHost(HWND owner, std::wstring& name, std::wstring& address, bool& ping) {

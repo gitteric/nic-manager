@@ -89,5 +89,13 @@ struct HostEntry {
     std::wstring name;     // display name, defaults to the address
     std::wstring address;  // IPv4 or host name
     bool ping = true;      // monitored by the pinger; off leaves the marker grey
+    int group = -1;        // index into the host groups, -1: top level
     std::vector<HostAction> actions;
+};
+
+// Folder in the host list. Its ping switch is ANDed with each member's.
+struct HostGroup {
+    std::wstring name;
+    bool ping = true;
+    bool expanded = true;
 };

@@ -54,6 +54,8 @@ constexpr wchar_t kGlyphError = 0xEA39;
 constexpr wchar_t kGlyphScan = 0xE721;  // magnifier
 constexpr wchar_t kGlyphView = 0xE890;  // eye: hidden adapters are shown
 constexpr wchar_t kGlyphHide = 0xED1A;  // crossed-out eye: hidden adapters are left out
+constexpr wchar_t kGlyphFolder = 0xE8B7;
+constexpr wchar_t kGlyphNewFolder = 0xE8F4;
 
 enum : UINT {
     IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_CERT, IDM_TASK_SETUP, IDM_TASK_REMOVE, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
@@ -229,6 +231,8 @@ void MainWindow::UpdateDpi(UINT dpi) {
     M.hint = S(22);
     M.pad = S(8);
     M.indent = S(18);
+    M.groupIndent = S(14);
+    M.folderText = S(22);
     M.btn = S(18);
     M.bar = S(6);
     M.scrollW = S(4);
@@ -385,7 +389,8 @@ LRESULT MainWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         ScrollTo(m_scroll - GET_WHEEL_DELTA_WPARAM(wp) * S(48) / WHEEL_DELTA);
         return 0;
     case WM_KEYDOWN:
-        if (wp == VK_ESCAPE) ShowWindow(m_hwnd, SW_HIDE);
+        if (wp == VK_ESCAPE && m_draggingHost) CancelHostDrag();
+        else if (wp == VK_ESCAPE) ShowWindow(m_hwnd, SW_HIDE);
         else if (wp == VK_F5) m_monitor.Trigger();
         return 0;
     case WM_CTLCOLOREDIT: {
@@ -538,22 +543,28 @@ void MainWindow::BuildLayout() {
     {
         Row& h = Push(RowKind::Header, M.header);
         h.text = L"HOSTS";
+        h.hostsHeader = true;
+        h.buttons.push_back({kGlyphNewFolder, Cmd::AddGroup, L"Add group"});
         h.buttons.push_back({kGlyphAdd, Cmd::AddHost, L"Add host"});
     }
-    for (int i = 0; i < (int)m_settings.hosts.size(); ++i) {
+    // Top-level hosts first, then each group with its hosts (in list order).
+    auto addHost = [&](int i, int level) {
         const HostEntry& host = m_settings.hosts[i];
         const HostState& st = m_hostState[i];
+        const bool pings = HostPings(i);
         bool expanded = m_expandedHost == i && !host.actions.empty();
         {
             Row& r = Push(RowKind::Host, M.host);
             r.host = i;
+            r.level = level;
             r.text = host.name.empty() ? host.address : host.name;
             if (r.text != host.address) r.sub = host.address;
-            r.state = !host.ping                    ? theme::Grey
+            r.state = !pings                        ? theme::Grey
                       : st.state == ping::State::Up   ? theme::Green
                       : st.state == ping::State::Down ? theme::Red
                                                       : theme::Grey;
             r.tip = !host.ping                      ? std::wstring(L"Ping off")
+                    : !pings                        ? std::wstring(L"Ping off for this group")
                     : st.state == ping::State::Up   ? L"Reachable, " + std::to_wstring(st.rtt) + L" ms"
                     : st.state == ping::State::Down ? std::wstring(L"Not reachable")
                                                     : std::wstring(L"Waiting for first reply");
@@ -572,6 +583,7 @@ void MainWindow::BuildLayout() {
                 Row& r = Push(RowKind::Action, M.action);
                 r.host = i;
                 r.index = k;
+                r.level = level;
                 r.text = actions::Describe(host.actions[k]);
                 r.tip = L"Click to connect";
                 r.rowCmd = Cmd::RunAction;
@@ -579,12 +591,48 @@ void MainWindow::BuildLayout() {
                              {kGlyphDelete, Cmd::DelAction, L"Remove action"}};
             }
         }
-    }
-    if (m_editTarget.kind == EditKind::NewHost) {
+    };
+    auto newHostSlot = [&](int group, int level) {
+        if (m_editTarget.kind != EditKind::NewHost || m_editTarget.index != group) return;
         Row& r = Push(RowKind::Value, M.host);
         r.editKind = EditKind::NewHost;
         r.editSlot = true;
-    } else if (m_settings.hosts.empty()) {
+        r.group = group;
+        r.level = level;
+    };
+    for (int i = 0; i < (int)m_settings.hosts.size(); ++i)
+        if (m_settings.hosts[i].group < 0) addHost(i, 0);
+    newHostSlot(-1, 0);
+    for (int g = 0; g < (int)m_settings.groups.size(); ++g) {
+        const HostGroup& grp = m_settings.groups[g];
+        int members = 0;
+        for (const auto& h : m_settings.hosts) members += h.group == g;
+        {
+            Row& r = Push(RowKind::Group, M.host);
+            r.group = g;
+            r.text = grp.name;
+            if (!grp.ping) r.sub = L"ping off";
+            r.tip = std::to_wstring(members) + (members == 1 ? L" host" : L" hosts") +
+                    (grp.ping ? L"" : L", not pinged");
+            r.expanded = grp.expanded;
+            r.chevron = true;
+            r.rowCmd = Cmd::ExpandGroup;
+            r.dblCmd = Cmd::EditGroup;
+            r.hoverButtons = true;
+            r.buttons = {{kGlyphAdd, Cmd::AddGroupHost, L"Add host to this group"},
+                         {kGlyphEdit, Cmd::EditGroup, L"Edit group"},
+                         {kGlyphDelete, Cmd::DelGroup, L"Remove group"}};
+        }
+        if (!grp.expanded) continue;
+        for (int i = 0; i < (int)m_settings.hosts.size(); ++i)
+            if (m_settings.hosts[i].group == g) addHost(i, 1);
+        newHostSlot(g, 1);
+    }
+    if (m_editTarget.kind == EditKind::NewGroup) {
+        Row& r = Push(RowKind::Group, M.host);
+        r.editKind = EditKind::NewGroup;
+        r.editSlot = true;
+    } else if (m_settings.hosts.empty() && m_settings.groups.empty() && m_editTarget.kind != EditKind::NewHost) {
         Row& r = Push(RowKind::Hint, M.hint);
         r.text = L"Click + to add a host to ping";
     }
@@ -821,6 +869,10 @@ void MainWindow::OnPaint() {
         if (r.y + r.h + dy < top || r.y + dy > bottom) continue;
         PaintRow(dc, r, i, dy);
     }
+    if (m_draggingHost && m_drop.valid && m_drop.lineY >= 0) {
+        RECT line{S(4), m_drop.lineY + dy - S(1), M.width - S(4), m_drop.lineY + dy + S(1)};
+        Fill(dc, line, theme::Accent);
+    }
     if (Scrollable()) {
         int view = bottom - top;
         int th = std::max(S(20), view * view / std::max(1, m_contentH));
@@ -895,6 +947,11 @@ void MainWindow::PaintRow(HDC dc, const Row& r, int ri, int dy) {
     case RowKind::Host: {
         RECT body = rc;
         body.bottom -= 1;  // 1px gap between entries
+        const int lv = r.level * M.groupIndent;
+        if (lv) {  // inside a group: indented, the gap shows the background
+            Fill(dc, {rc.left, rc.top, rc.left + lv, rc.bottom}, theme::Bg);
+            body.left += lv;
+        }
         COLORREF tint = r.state == theme::Green ? theme::GreenTint : r.state == theme::Red ? theme::RedTint
                                                                                            : theme::Surface;
         COLORREF bg = (hover || r.expanded) ? theme::SurfaceHover : Lerp(theme::Surface, tint, 0.55);
@@ -903,7 +960,7 @@ void MainWindow::PaintRow(HDC dc, const Row& r, int ri, int dy) {
         Fill(dc, stripe, r.state);
         const bool showButtons = !r.editSlot && (!r.hoverButtons || hover || r.expanded);
         const int textRight = showButtons ? r.textRight : r.textRightFull;
-        const int x = M.bar + M.pad;
+        const int x = M.bar + M.pad + lv;
         if (r.kind == RowKind::Adapter) {
             int mid = body.top + (body.bottom - body.top) / 2;
             RECT n{x, body.top + S(2), textRight, mid + S(1)};
@@ -930,6 +987,34 @@ void MainWindow::PaintRow(HDC dc, const Row& r, int ri, int dy) {
         if (showButtons) paintButtons();
         break;
     }
+    case RowKind::Group: {
+        RECT body = rc;
+        body.bottom -= 1;
+        const bool dropHere = m_draggingHost && m_drop.highlightRow == ri;
+        COLORREF bg = dropHere ? Lerp(theme::Surface, theme::Accent, 0.35)
+                      : (hover || r.editSlot) ? theme::SurfaceHover
+                                              : theme::Surface;
+        Fill(dc, body, bg);
+        RECT g{M.pad - S(2), body.top, M.pad + S(16), body.bottom};
+        DrawGlyph(dc, m_fontIcon, kGlyphFolder, g, theme::TextDim);
+        if (r.editSlot) break;
+        const bool showButtons = hover || dropHere;
+        const int textRight = showButtons ? r.textRight : r.textRightFull;
+        const int x = M.pad + M.folderText;
+        RECT t{x, body.top, textRight, body.bottom};
+        DrawStr(dc, m_fontBold, r.text, t, theme::Text);
+        if (!r.sub.empty()) {
+            SIZE sz{};
+            SelectObject(dc, m_fontBold);
+            GetTextExtentPoint32W(dc, r.text.c_str(), (int)r.text.size(), &sz);
+            RECT a{x + sz.cx + S(8), body.top, textRight, body.bottom};
+            if (a.left < a.right) DrawStr(dc, m_fontSmall, r.sub, a, theme::TextDim);
+        }
+        RECT c{r.textRightFull + S(4), body.top, r.textRightFull + S(4) + M.chevron + S(2), body.bottom};
+        DrawGlyph(dc, m_fontIcon, r.expanded ? kGlyphChevronDown : kGlyphChevronRight, c, theme::TextDim);
+        if (showButtons) paintButtons();
+        break;
+    }
     case RowKind::Toggle: {
         Fill(dc, rc, theme::Detail);
         RECT t{M.indent, rc.top, r.textRight, rc.bottom};
@@ -945,7 +1030,13 @@ void MainWindow::PaintRow(HDC dc, const Row& r, int ri, int dy) {
         break;
     }
     case RowKind::Value: {
-        Fill(dc, rc, r.editKind == EditKind::NewHost ? theme::Surface : theme::Detail);
+        if (r.editKind == EditKind::NewHost) {
+            const int lv = r.level * M.groupIndent;
+            Fill(dc, {rc.left, rc.top, rc.left + lv, rc.bottom}, theme::Bg);
+            Fill(dc, {rc.left + lv, rc.top, rc.right, rc.bottom - 1}, theme::Surface);
+        } else {
+            Fill(dc, rc, theme::Detail);
+        }
         if (r.editSlot) break;
         if (hover && r.dblCmd != Cmd::None) {
             RECT hl{M.indent - S(4), rc.top + 1, r.textRightFull + S(4), rc.bottom - 1};
@@ -957,10 +1048,11 @@ void MainWindow::PaintRow(HDC dc, const Row& r, int ri, int dy) {
         break;
     }
     case RowKind::Action: {
+        const int lv = r.level * M.groupIndent;
         Fill(dc, rc, hover ? Lerp(theme::Detail, theme::SurfaceHover, 0.6) : theme::Detail);
-        RECT g{M.indent - S(4), rc.top, M.indent + S(12), rc.bottom};
+        RECT g{lv + M.indent - S(4), rc.top, lv + M.indent + S(12), rc.bottom};
         DrawGlyph(dc, m_fontIcon, kGlyphPlay, g, theme::Accent);
-        RECT t{M.indent + S(14), rc.top, r.textRight, rc.bottom};
+        RECT t{lv + M.indent + S(14), rc.top, r.textRight, rc.bottom};
         DrawStr(dc, m_font, r.text, t, theme::Text);
         paintButtons();
         break;
@@ -1070,6 +1162,25 @@ void MainWindow::OnMouseMove(POINT pt) {
         ScrollTo(m_dragStartScroll + (pt.y - m_dragStartY) * (m_contentH - view) / track);
         return;
     }
+    if (m_dragHost >= 0) {
+        if (!(GetKeyState(VK_LBUTTON) & 0x8000)) {  // released outside our window
+            CancelHostDrag();
+        } else if (!m_draggingHost && (std::abs(pt.x - m_dragHostStart.x) > GetSystemMetrics(SM_CXDRAG) ||
+                                       std::abs(pt.y - m_dragHostStart.y) > GetSystemMetrics(SM_CYDRAG))) {
+            m_draggingHost = true;
+            SetTip(L"");
+        }
+        if (m_draggingHost) {
+            RECT client;
+            GetClientRect(m_hwnd, &client);
+            if (pt.y < M.title + S(16)) ScrollTo(m_scroll - S(12));  // drag near an edge scrolls the list
+            else if (pt.y > client.bottom - M.bottom - S(16)) ScrollTo(m_scroll + S(12));
+            m_drop = DropAt(pt);
+            SetCursor(LoadCursorW(nullptr, m_drop.valid ? IDC_ARROW : IDC_NO));
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+            return;
+        }
+    }
     Hit h = HitTest(pt);
     if (h.fixed != m_hover.fixed || h.row != m_hover.row || h.button != m_hover.button ||
         h.toggle != m_hover.toggle || h.scrollbar != m_hover.scrollbar) {
@@ -1135,10 +1246,15 @@ void MainWindow::OnLButtonDown(POINT pt, bool dbl) {
     if (dbl && h.row >= 0 && h.button < 0 && m_rows[h.row].dblCmd != Cmd::None) {
         m_press = {};
         Row row = m_rows[h.row];
+        if (row.kind == RowKind::Group) Execute(&row, Cmd::ExpandGroup);  // undo the fold from the first click
         Execute(&row, row.dblCmd);
         return;
     }
     m_press = h;
+    if (h.row >= 0 && h.button < 0 && m_rows[h.row].kind == RowKind::Host) {
+        m_dragHost = m_rows[h.row].host;
+        m_dragHostStart = pt;
+    }
     SetCapture(m_hwnd);
 }
 
@@ -1149,6 +1265,15 @@ void MainWindow::OnLButtonUp(POINT pt) {
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return;
     }
+    if (m_draggingHost) {
+        const int src = m_dragHost;
+        const Drop d = DropAt(pt);
+        CancelHostDrag();
+        m_press = {};
+        if (d.valid) MoveHost(src, d);
+        return;
+    }
+    m_dragHost = -1;
     Hit h = HitTest(pt);
     Hit p = m_press;
     m_press = {};
@@ -1171,11 +1296,11 @@ void MainWindow::OnRButtonUp(POINT pt) {
     POINT screen = pt;
     ClientToScreen(m_hwnd, &screen);
     if (r.kind == RowKind::Adapter) ShowAdapterMenu(r.adapter, screen);
-    else if (r.kind == RowKind::Host) ShowHostMenu(h.row, screen);
+    else if (r.kind == RowKind::Host || (r.kind == RowKind::Group && !r.editSlot)) ShowHostMenu(h.row, screen);
 }
 
 bool MainWindow::IsBlockedWhileBusy(Cmd cmd) const {
-    return cmd != Cmd::ExpandAdapter && cmd != Cmd::ExpandHost && cmd != Cmd::Hide && cmd != Cmd::Exit &&
+    return cmd != Cmd::ExpandAdapter && cmd != Cmd::ExpandHost && cmd != Cmd::ExpandGroup && cmd != Cmd::Hide && cmd != Cmd::Exit &&
            cmd != Cmd::Minimize && cmd != Cmd::OpenWifi && cmd != Cmd::OpenNcpa && cmd != Cmd::StopScan;
 }
 
@@ -1187,6 +1312,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
     }
     const Adapter* a = row.adapter >= 0 && row.adapter < (int)m_adapters.size() ? &m_adapters[row.adapter] : nullptr;
     HostEntry* host = row.host >= 0 && row.host < (int)m_settings.hosts.size() ? &m_settings.hosts[row.host] : nullptr;
+    HostGroup* grp = row.group >= 0 && row.group < (int)m_settings.groups.size() ? &m_settings.groups[row.group] : nullptr;
     const int idx = row.index;
     Ipv4Config c = a ? a->cfg : Ipv4Config{};
 
@@ -1273,6 +1399,42 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
     case Cmd::AddDns: if (a) BeginEdit(EditKind::NewDns, row.adapter, -1, L""); break;
 
     case Cmd::AddHost: BeginEdit(EditKind::NewHost, -1, -1, L""); break;
+    case Cmd::AddGroup: BeginEdit(EditKind::NewGroup, -1, -1, L""); break;
+    case Cmd::AddGroupHost:
+        if (!grp) break;
+        if (!grp->expanded) {
+            grp->expanded = true;
+            SaveHosts();
+        }
+        BeginEdit(EditKind::NewHost, -1, row.group, L"");
+        break;
+    case Cmd::ExpandGroup:
+        if (!grp) break;
+        grp->expanded = !grp->expanded;
+        SaveHosts();
+        Relayout();
+        break;
+    case Cmd::EditGroup:
+        if (grp) {
+            std::wstring name = grp->name;
+            bool ping = grp->ping;
+            if (dialogs::EditGroup(m_hwnd, name, ping)) {
+                HostGroup& g = m_settings.groups[row.group];
+                g.name = name;
+                if (g.ping != ping) {
+                    g.ping = ping;
+                    for (int i = 0; i < (int)m_settings.hosts.size(); ++i)
+                        if (m_settings.hosts[i].group == row.group) m_hostState[i] = {m_nextHostId++};
+                }
+                SaveHosts();
+                SyncPinger();
+                Relayout();
+            }
+        }
+        break;
+    case Cmd::DelGroup:
+        if (grp) DeleteGroup(row.group);
+        break;
     case Cmd::EditHost:
         if (host) {
             std::wstring name = host->name, address = host->address;
@@ -1285,7 +1447,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
                     m_hostState[row.host] = {m_nextHostId++};  // new id restarts the ping worker
                 }
                 SetHostPing(row.host, ping);
-                settings::SaveHosts(m_settings.hosts);
+                SaveHosts();
                 SyncPinger();
                 Relayout();
             }
@@ -1297,11 +1459,8 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
             MessageBoxW(m_hwnd, (L"Remove " + host->name + L" and its actions?").c_str(), L"NIC Manager",
                         MB_YESNO | MB_ICONQUESTION) != IDYES)
             break;
-        m_settings.hosts.erase(m_settings.hosts.begin() + row.host);
-        m_hostState.erase(m_hostState.begin() + row.host);
-        if (m_expandedHost == row.host) m_expandedHost = -1;
-        else if (m_expandedHost > row.host) --m_expandedHost;
-        settings::SaveHosts(m_settings.hosts);
+        EraseHost(row.host);
+        SaveHosts();
         SyncPinger();
         Relayout();
         break;
@@ -1312,7 +1471,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
         if (EditActionDialog(act, host->address, true)) {
             m_settings.hosts[row.host].actions.push_back(act);
             m_expandedHost = row.host;
-            settings::SaveHosts(m_settings.hosts);
+            SaveHosts();
             Relayout();
         }
         break;
@@ -1329,7 +1488,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
             HostAction act = host->actions[idx];
             if (EditActionDialog(act, host->address, false)) {
                 m_settings.hosts[row.host].actions[idx] = act;
-                settings::SaveHosts(m_settings.hosts);
+                SaveHosts();
                 Relayout();
             }
         }
@@ -1338,7 +1497,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
         if (host && idx >= 0 && idx < (int)host->actions.size()) {
             host->actions.erase(host->actions.begin() + idx);
             if (host->actions.empty() && m_expandedHost == row.host) m_expandedHost = -1;
-            settings::SaveHosts(m_settings.hosts);
+            SaveHosts();
             Relayout();
         }
         break;
@@ -1414,7 +1573,8 @@ void MainWindow::BeginEdit(EditKind kind, int adapterOrHost, int index, const st
     m_editTarget.index = index;
     m_editTarget.fromDhcp = fromDhcp;
     if (kind == EditKind::Host || kind == EditKind::NewHost) m_editTarget.host = adapterOrHost;
-    else if (adapterOrHost >= 0 && adapterOrHost < (int)m_adapters.size())
+    else if (kind == EditKind::NewGroup) {
+    } else if (adapterOrHost >= 0 && adapterOrHost < (int)m_adapters.size())
         m_editTarget.guid = m_adapters[adapterOrHost].guid;
     ++m_editGen;
 
@@ -1424,6 +1584,7 @@ void MainWindow::BeginEdit(EditKind kind, int adapterOrHost, int index, const st
     SendMessageW(m_edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(S(4), S(4)));
     const wchar_t* cue = kind == EditKind::Address || kind == EditKind::NewAddress ? L"192.168.1.10/24"
                          : kind == EditKind::Host || kind == EditKind::NewHost  ? L"IP or host name"
+                         : kind == EditKind::NewGroup                           ? L"Group name"
                                                                                 : L"192.168.1.1";
     SendMessageW(m_edit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(cue));
     SetWindowSubclass(m_edit, EditProc, 1, reinterpret_cast<DWORD_PTR>(this));
@@ -1442,7 +1603,10 @@ void MainWindow::PositionEdit() {
     GetClientRect(m_hwnd, &client);
     for (const Row& r : m_rows) {
         if (!r.editSlot) continue;
-        int left = r.kind == RowKind::Host || r.editKind == EditKind::NewHost ? M.bar + M.pad - S(4) : M.indent;
+        int left = r.editKind == EditKind::NewGroup ? M.pad + M.folderText - S(4)
+                   : r.kind == RowKind::Host || r.editKind == EditKind::NewHost
+                       ? r.level * M.groupIndent + M.bar + M.pad - S(4)
+                       : M.indent;
         int top = r.y + M.title - m_scroll + (r.h - M.editH) / 2;
         bool visible = top >= M.title && top + M.editH <= client.bottom - M.bottom;
         SetWindowPos(m_edit, nullptr, left, top, r.textRightFull - left + S(4), M.editH,
@@ -1465,15 +1629,26 @@ void MainWindow::CommitEdit() {
     if (t.kind == EditKind::Host || t.kind == EditKind::NewHost) {
         if (!ip::IsValidHost(text)) return invalid(L"Enter an IPv4 address or host name");
         if (t.kind == EditKind::NewHost) {
-            m_settings.hosts.push_back({text, text, {}});
+            HostEntry e;
+            e.name = e.address = text;
+            if (t.index >= 0 && t.index < (int)m_settings.groups.size()) e.group = t.index;
+            m_settings.hosts.push_back(std::move(e));
             m_hostState.push_back({m_nextHostId++});
         } else if (t.host >= 0 && t.host < (int)m_settings.hosts.size() && m_settings.hosts[t.host].address != text) {
             m_settings.hosts[t.host].address = text;
             m_hostState[t.host] = {m_nextHostId++};  // new id restarts the ping worker
         }
-        settings::SaveHosts(m_settings.hosts);
+        SaveHosts();
         EndEdit();
         SyncPinger();
+        return;
+    }
+
+    if (t.kind == EditKind::NewGroup) {
+        if (text.empty()) return invalid(L"Enter a group name");
+        m_settings.groups.push_back({text});
+        SaveHosts();
+        EndEdit();
         return;
     }
 
@@ -1639,8 +1814,128 @@ void MainWindow::OnPing(uint32_t id, ping::State state, int rtt) {
 void MainWindow::SyncPinger() {
     std::vector<std::pair<uint32_t, std::wstring>> list;
     for (size_t i = 0; i < m_settings.hosts.size(); ++i)
-        if (m_settings.hosts[i].ping) list.emplace_back(m_hostState[i].id, m_settings.hosts[i].address);
+        if (HostPings((int)i)) list.emplace_back(m_hostState[i].id, m_settings.hosts[i].address);
     m_pinger.Sync(list);
+}
+
+void MainWindow::SaveHosts() { settings::SaveHosts(m_settings.hosts, m_settings.groups); }
+
+bool MainWindow::HostPings(int i) const {
+    const HostEntry& h = m_settings.hosts[i];
+    return h.ping && (h.group < 0 || h.group >= (int)m_settings.groups.size() || m_settings.groups[h.group].ping);
+}
+
+void MainWindow::EraseHost(int i) {
+    m_settings.hosts.erase(m_settings.hosts.begin() + i);
+    m_hostState.erase(m_hostState.begin() + i);
+    if (m_expandedHost == i) m_expandedHost = -1;
+    else if (m_expandedHost > i) --m_expandedHost;
+}
+
+void MainWindow::DeleteGroup(int g) {
+    const HostGroup grp = m_settings.groups[g];
+    int members = 0;
+    for (const auto& h : m_settings.hosts) members += h.group == g;
+    bool deleteHosts = false;
+    if (members > 0) {
+        std::wstring q = L"Also delete the " + std::to_wstring(members) + (members == 1 ? L" host" : L" hosts") +
+                         L" in \"" + grp.name +
+                         (members == 1 ? L"\"?\n\nYes deletes it, No moves it to the top level."
+                                       : L"\"?\n\nYes deletes them, No moves them to the top level.");
+        int answer = MessageBoxW(m_hwnd, q.c_str(), L"Remove group", MB_YESNOCANCEL | MB_ICONQUESTION);
+        if (answer == IDCANCEL) return;
+        deleteHosts = answer == IDYES;
+    }
+    for (int i = (int)m_settings.hosts.size() - 1; i >= 0; --i) {
+        HostEntry& h = m_settings.hosts[i];
+        if (h.group == g) {
+            if (deleteHosts) {
+                EraseHost(i);
+                continue;
+            }
+            h.group = -1;
+            if (!grp.ping) m_hostState[i] = {m_nextHostId++};  // starts pinging now
+        } else if (h.group > g) {
+            --h.group;
+        }
+    }
+    m_settings.groups.erase(m_settings.groups.begin() + g);
+    SaveHosts();
+    SyncPinger();
+    Relayout();
+}
+
+MainWindow::Drop MainWindow::DropAt(POINT pt) const {
+    Drop d;
+    RECT client;
+    GetClientRect(m_hwnd, &client);
+    if (pt.y < M.title || pt.y >= client.bottom - M.bottom) return d;
+    const int y = pt.y - M.title + m_scroll;
+    const auto& hosts = m_settings.hosts;
+    for (int i = 0; i < (int)m_rows.size(); ++i) {
+        const Row& r = m_rows[i];
+        if (y < r.y || y >= r.y + r.h) continue;
+        if (r.hostsHeader) {  // top of the list: first place on the top level
+            d.pos = (int)hosts.size();
+            for (int k = 0; k < (int)hosts.size(); ++k)
+                if (hosts[k].group < 0) {
+                    d.pos = k;
+                    break;
+                }
+            d.group = -1;
+            d.lineY = r.y + r.h;
+            d.valid = true;
+        } else if (r.kind == RowKind::Group && !r.editSlot) {  // onto a group: appended to it
+            d.group = r.group;
+            d.pos = (int)hosts.size();
+            d.highlightRow = i;
+            d.valid = true;
+        } else if ((r.kind == RowKind::Host || r.kind == RowKind::Action) && r.host >= 0) {
+            int first = i, last = i;  // the host row and its expanded actions
+            while (m_rows[first].kind != RowKind::Host) --first;
+            while (last + 1 < (int)m_rows.size() && m_rows[last + 1].kind == RowKind::Action &&
+                   m_rows[last + 1].host == r.host)
+                ++last;
+            const bool before = r.kind == RowKind::Host && y < r.y + r.h / 2;
+            d.group = hosts[r.host].group;
+            d.pos = before ? r.host : r.host + 1;
+            d.lineY = before ? m_rows[first].y : m_rows[last].y + m_rows[last].h;
+            d.valid = true;
+        }
+        break;
+    }
+    return d;
+}
+
+void MainWindow::MoveHost(int src, const Drop& d) {
+    if (src < 0 || src >= (int)m_settings.hosts.size()) return;
+    if (d.group == m_settings.hosts[src].group && (d.pos == src || d.pos == src + 1)) return;  // same place
+    const bool wasPinging = HostPings(src);
+    const uint32_t expandedId = m_expandedHost >= 0 ? m_hostState[m_expandedHost].id : 0;
+    HostEntry e = std::move(m_settings.hosts[src]);
+    HostState st = m_hostState[src];
+    m_settings.hosts.erase(m_settings.hosts.begin() + src);
+    m_hostState.erase(m_hostState.begin() + src);
+    int pos = std::clamp(d.pos > src ? d.pos - 1 : d.pos, 0, (int)m_settings.hosts.size());
+    e.group = d.group;
+    m_settings.hosts.insert(m_settings.hosts.begin() + pos, std::move(e));
+    m_hostState.insert(m_hostState.begin() + pos, st);
+    m_expandedHost = -1;
+    for (int i = 0; i < (int)m_hostState.size(); ++i)
+        if (expandedId && m_hostState[i].id == expandedId) m_expandedHost = i;
+    if (HostPings(pos) != wasPinging) m_hostState[pos] = {m_nextHostId++};
+    if (d.group >= 0 && !m_settings.groups[d.group].expanded) m_settings.groups[d.group].expanded = true;
+    SaveHosts();
+    SyncPinger();
+    Relayout();
+}
+
+void MainWindow::CancelHostDrag() {
+    m_dragHost = -1;
+    m_draggingHost = false;
+    m_drop = {};
+    if (GetCapture() == m_hwnd) ReleaseCapture();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 bool MainWindow::EditActionDialog(HostAction& act, const std::wstring& hostAddress, bool isNew) {
@@ -1971,16 +2266,26 @@ void MainWindow::ShowAdapterMenu(int ai, POINT screen) {
 
 void MainWindow::ShowHostMenu(int rowIndex, POINT screen) {
     const Row row = m_rows[rowIndex];  // copy: a ping result may rebuild the rows while the menu is open
-    if (row.host < 0 || row.host >= (int)m_settings.hosts.size()) return;
+    const bool isGroup = row.kind == RowKind::Group;
+    if (isGroup ? row.group < 0 || row.group >= (int)m_settings.groups.size()
+                : row.host < 0 || row.host >= (int)m_settings.hosts.size())
+        return;
+    const bool on = isGroup ? m_settings.groups[row.group].ping : m_settings.hosts[row.host].ping;
 
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING | (m_settings.hosts[row.host].ping ? MF_CHECKED : 0), IDM_HOST_PING, L"Ping");
+    AppendMenuW(menu, MF_STRING | (on ? MF_CHECKED : 0), IDM_HOST_PING, L"Ping");
     UINT id = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, 0, m_hwnd, nullptr);
     DestroyMenu(menu);
 
     if (id == IDM_HOST_PING) {
-        SetHostPing(row.host, !m_settings.hosts[row.host].ping);
-        settings::SaveHosts(m_settings.hosts);
+        if (isGroup) {
+            m_settings.groups[row.group].ping = !on;
+            for (int i = 0; i < (int)m_settings.hosts.size(); ++i)
+                if (m_settings.hosts[i].group == row.group) m_hostState[i] = {m_nextHostId++};
+        } else {
+            SetHostPing(row.host, !on);
+        }
+        SaveHosts();
         SyncPinger();
         Relayout();
     }
@@ -2088,12 +2393,15 @@ void MainWindow::StartScan(const Adapter& a, int index, scan::Kind kind, uint32_
                            (!h.name.empty() && _wcsicmp(e.address.c_str(), h.name.c_str()) == 0);
                 });
                 if (listed) continue;
-                m_settings.hosts.push_back({h.name.empty() ? address : h.name, address, {}});
+                HostEntry e;
+                e.name = h.name.empty() ? address : h.name;
+                e.address = address;
+                m_settings.hosts.push_back(std::move(e));
                 m_hostState.push_back({m_nextHostId++});
                 ++added;
             }
             if (added) {
-                settings::SaveHosts(m_settings.hosts);
+                SaveHosts();
                 SyncPinger();
                 Relayout();
             }

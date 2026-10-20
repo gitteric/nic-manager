@@ -9,6 +9,7 @@
 #define IDI_APP           1
 #define IDD_STARTTASK     105
 #define IDD_SCANRESULT    106
+#define IDD_GROUP         107
 #define IDC_AUTOSTART     1040
 #define IDC_SHORTCUT      1041
 
