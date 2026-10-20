@@ -23,7 +23,7 @@ bool FileExists(const std::wstring& path) {
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-// System32 as seen by a native process. A 32-bit build on 64-bit Windows
+// System32 as seen by this process. A 32-bit build on 64-bit Windows
 // would otherwise land in SysWOW64, which has no OpenSSH.
 std::wstring NativeSystemDir() {
     wchar_t dir[MAX_PATH] = {};
@@ -34,6 +34,14 @@ std::wstring NativeSystemDir() {
     }
     GetSystemDirectoryW(dir, MAX_PATH);
     return dir;
+}
+
+// System32 as a native (64-bit) child such as cmd.exe sees it: "Sysnative"
+// exists only for 32-bit processes.
+std::wstring ChildSystemDir() {
+    wchar_t dir[MAX_PATH] = {};
+    GetWindowsDirectoryW(dir, MAX_PATH);
+    return std::wstring(dir) + L"\\System32";
 }
 
 std::wstring LastErrorText(const std::wstring& what) {
@@ -163,8 +171,10 @@ std::wstring ConnectSsh(const std::wstring& host, const SshSettings& s) {
     std::wstring target = s.user.empty() ? host : s.user + L"@" + host;
     std::wstring args = L"-p " + std::to_wstring(s.port) +
                         L" -o StrictHostKeyChecking=accept-new -o NumberOfPasswordPrompts=1 " + Quote(target);
-    // cmd keeps the window open with the error when ssh fails.
-    std::wstring line = L"/s /c \"title SSH " + target + L" & " + Quote(ssh) + L" " + args + L" || pause\"";
+    // cmd keeps the window open with the error when ssh fails. cmd runs
+    // natively, so it gets ssh's System32 path, not the Sysnative alias.
+    const std::wstring sshForCmd = ChildSystemDir() + L"\\OpenSSH\\ssh.exe";
+    std::wstring line = L"/s /c \"title SSH " + target + L" & " + Quote(sshForCmd) + L" " + args + L" || pause\"";
 
     // ssh.exe asks this executable for the password (SSH_ASKPASS); the
     // password travels DPAPI-encrypted in the environment of the child only.

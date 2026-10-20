@@ -200,7 +200,23 @@ Preset export file:
 }
 ```
 
-Import validates every address and replaces presets that have the same name.
+Import (preset dialog, or tray menu Import > Presets) validates every address and replaces presets that have the same name. In the preset dialog a click toggles a preset; Export takes the selected ones, or all when none is selected.
+
+Host export file (right-click on the HOSTS header, a group or a host > Export):
+
+```json
+{
+  "format": "nic-manager-hosts",
+  "version": 1,
+  "groups": [{ "name": "Office", "ping": true, "expanded": true }],
+  "hosts": [
+    { "name": "NAS", "address": "nas.lan", "ping": true, "group": 0,
+      "actions": [{ "type": "browser", "url": "https://nas.lan:5001" }] }
+  ]
+}
+```
+
+`group` is an index into `groups`, -1 for the top level. A single-host export has no `groups` and no `group`. Passwords stay DPAPI-encrypted, so they only decrypt for the same Windows user on the same PC. Import (tray menu Import > Hosts) replaces groups and hosts with the same name (case-insensitive) by the file's version; a host without `group` keeps the group it already has.
 
 ### Subnet scans
 

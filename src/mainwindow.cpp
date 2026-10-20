@@ -59,7 +59,7 @@ constexpr wchar_t kGlyphNewFolder = 0xE8F4;
 
 enum : UINT {
     IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_CERT, IDM_TASK_SETUP, IDM_TASK_REMOVE, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
-    IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP, IDM_HIDE_ADAPTER, IDM_HOST_PING,
+    IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP, IDM_HIDE_ADAPTER, IDM_HOST_PING, IDM_HOST_EXPORT, IDM_IMPORT_HOSTS, IDM_IMPORT_PRESETS,
     IDM_CYCLE_BASE = 200,
     IDM_DESIGN_BASE = 300,
     IDM_APPLY_PRESET_BASE = 1000,
@@ -1296,7 +1296,8 @@ void MainWindow::OnRButtonUp(POINT pt) {
     POINT screen = pt;
     ClientToScreen(m_hwnd, &screen);
     if (r.kind == RowKind::Adapter) ShowAdapterMenu(r.adapter, screen);
-    else if (r.kind == RowKind::Host || (r.kind == RowKind::Group && !r.editSlot)) ShowHostMenu(h.row, screen);
+    else if (r.kind == RowKind::Host || (r.kind == RowKind::Group && !r.editSlot) || r.hostsHeader)
+        ShowHostMenu(h.row, screen);
 }
 
 bool MainWindow::IsBlockedWhileBusy(Cmd cmd) const {
@@ -2094,9 +2095,13 @@ void MainWindow::OpenPresetEditor() {
 void MainWindow::ShowTrayMenu() {
     const DWORD cur = m_settings.pingCycleMs;
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, IDM_SHOW, IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd) ? L"Hide window" : L"Show window");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_PRESETS, L"Edit IPv4 presets...");
+    //AppendMenuW(menu, MF_STRING, IDM_SHOW, IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd) ? L"Hide window" : L"Show window");
+    //AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_PRESETS, L"Edit presets");
+    HMENU import = CreatePopupMenu();
+    AppendMenuW(import, MF_STRING, IDM_IMPORT_HOSTS, L"Hosts...");
+    AppendMenuW(import, MF_STRING, IDM_IMPORT_PRESETS, L"Presets...");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(import), L"Import");
 
     HMENU cycle = CreatePopupMenu();
     bool matched = false;
@@ -2148,6 +2153,15 @@ void MainWindow::ShowTrayMenu() {
         else ShowRestored();
     }
     else if (id == IDM_PRESETS) OpenPresetEditor();
+    else if (id == IDM_IMPORT_HOSTS) ImportHosts();
+    else if (id == IDM_IMPORT_PRESETS) {
+        ShowWindow(m_hwnd, SW_SHOW);
+        int n = dialogs::ImportPresets(m_hwnd, m_settings.presets);
+        if (n >= 0) {
+            settings::SavePresets(m_settings.presets);
+            SetStatus(L"Imported " + std::to_wstring(n) + (n == 1 ? L" preset" : L" presets"), theme::Green, 3000);
+        }
+    }
     else if (id == IDM_EXIT) DestroyWindow(m_hwnd);
     else if (id == IDM_TOPMOST) {
         m_settings.alwaysOnTop = !m_settings.alwaysOnTop;
@@ -2207,15 +2221,15 @@ void MainWindow::ShowAdapterMenu(int ai, POINT screen) {
     const bool canUse = a.enabled && a.ipv4Enabled;
 
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING | (IsHidden(a.guid) ? MF_CHECKED : 0), IDM_HIDE_ADAPTER, L"Hidden");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | (canUse ? 0 : MF_GRAYED), IDM_SAVE_PRESET, L"Save IPv4 config as preset...");
     HMENU apply = CreatePopupMenu();
     for (int i = 0; i < (int)m_settings.presets.size(); ++i)
         AppendMenuW(apply, MF_STRING, IDM_APPLY_PRESET_BASE + i, m_settings.presets[i].name.c_str());
     if (m_settings.presets.empty()) AppendMenuW(apply, MF_STRING | MF_GRAYED, 0, L"(no presets)");
     AppendMenuW(menu, MF_POPUP | (canUse && !m_busy ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(apply),
                 L"Apply preset");
+    AppendMenuW(menu, MF_STRING | (canUse ? 0 : MF_GRAYED), IDM_SAVE_PRESET, L"Save IPv4 config as preset...");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (IsHidden(a.guid) ? MF_CHECKED : 0), IDM_HIDE_ADAPTER, L"Hidden");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_REFRESH, L"Refresh");
 
@@ -2266,6 +2280,15 @@ void MainWindow::ShowAdapterMenu(int ai, POINT screen) {
 
 void MainWindow::ShowHostMenu(int rowIndex, POINT screen) {
     const Row row = m_rows[rowIndex];  // copy: a ping result may rebuild the rows while the menu is open
+    if (row.hostsHeader) {  // the whole list
+        HMENU menu = CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING | (m_settings.hosts.empty() && m_settings.groups.empty() ? MF_GRAYED : 0),
+                    IDM_HOST_EXPORT, L"Export...");
+        UINT id = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, 0, m_hwnd, nullptr);
+        DestroyMenu(menu);
+        if (id == IDM_HOST_EXPORT) ExportHosts(-1, -1);
+        return;
+    }
     const bool isGroup = row.kind == RowKind::Group;
     if (isGroup ? row.group < 0 || row.group >= (int)m_settings.groups.size()
                 : row.host < 0 || row.host >= (int)m_settings.hosts.size())
@@ -2274,10 +2297,13 @@ void MainWindow::ShowHostMenu(int rowIndex, POINT screen) {
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING | (on ? MF_CHECKED : 0), IDM_HOST_PING, L"Ping");
+    AppendMenuW(menu, MF_STRING, IDM_HOST_EXPORT, L"Export...");
     UINT id = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, 0, m_hwnd, nullptr);
     DestroyMenu(menu);
 
-    if (id == IDM_HOST_PING) {
+    if (id == IDM_HOST_EXPORT) {
+        ExportHosts(isGroup ? row.group : -1, isGroup ? -1 : row.host);
+    } else if (id == IDM_HOST_PING) {
         if (isGroup) {
             m_settings.groups[row.group].ping = !on;
             for (int i = 0; i < (int)m_settings.hosts.size(); ++i)
@@ -2289,6 +2315,86 @@ void MainWindow::ShowHostMenu(int rowIndex, POINT screen) {
         SyncPinger();
         Relayout();
     }
+}
+
+void MainWindow::ExportHosts(int group, int host) {
+    std::vector<HostEntry> hosts;
+    std::vector<HostGroup> groups;
+    std::wstring name = L"hosts";
+    bool withGroups = true;
+    if (host >= 0) {  // one host, without its group
+        hosts.push_back(m_settings.hosts[host]);
+        name = m_settings.hosts[host].name;
+        withGroups = false;
+    } else if (group >= 0) {  // one group with its hosts
+        groups.push_back(m_settings.groups[group]);
+        for (const auto& h : m_settings.hosts)
+            if (h.group == group) {
+                hosts.push_back(h);
+                hosts.back().group = 0;
+            }
+        name = m_settings.groups[group].name;
+    } else {
+        hosts = m_settings.hosts;
+        groups = m_settings.groups;
+    }
+    std::wstring path;
+    if (!dialogs::PickJsonFile(m_hwnd, true, name + L".json", path)) return;
+    if (!settings::WriteFileUtf8(path, settings::HostsExportJson(hosts, groups, withGroups))) {
+        ShowToast(L"Export failed", L"Could not write " + path, L"");
+        return;
+    }
+    SetStatus(L"Exported " + std::to_wstring(hosts.size()) + (hosts.size() == 1 ? L" host" : L" hosts"), theme::Green,
+              3000);
+}
+
+void MainWindow::ImportHosts() {
+    ShowWindow(m_hwnd, SW_SHOW);
+    std::wstring path, err;
+    std::string data;
+    if (!dialogs::PickJsonFile(m_hwnd, false, L"", path)) return;
+    std::vector<HostEntry> in;
+    std::vector<HostGroup> inGroups;
+    if (!settings::ReadFileUtf8(path, data)) err = L"Could not read " + path;
+    else settings::HostsImportJson(data, in, inGroups, &err);
+    if (!err.empty()) {
+        MessageBoxW(m_hwnd, err.c_str(), L"Import failed", MB_OK | MB_ICONERROR);
+        return;
+    }
+    auto same = [](const std::wstring& a, const std::wstring& b) { return _wcsicmp(a.c_str(), b.c_str()) == 0; };
+    // Groups and hosts with a name already listed are replaced by the file's version.
+    std::vector<int> groupMap;
+    for (const auto& g : inGroups) {
+        auto it = std::find_if(m_settings.groups.begin(), m_settings.groups.end(),
+                               [&](const HostGroup& e) { return same(e.name, g.name); });
+        if (it != m_settings.groups.end()) {
+            *it = g;
+        } else {
+            m_settings.groups.push_back(g);
+            it = m_settings.groups.end() - 1;
+        }
+        groupMap.push_back((int)(it - m_settings.groups.begin()));
+    }
+    for (auto& h : in) {
+        const int target = h.group >= 0 ? groupMap[h.group] : h.group;  // -2: file names no group
+        auto it = std::find_if(m_settings.hosts.begin(), m_settings.hosts.end(),
+                               [&](const HostEntry& e) { return same(e.name, h.name); });
+        if (it != m_settings.hosts.end()) {
+            h.group = target == -2 ? it->group : target;
+            const int i = (int)(it - m_settings.hosts.begin());
+            *it = std::move(h);
+            m_hostState[i] = {m_nextHostId++};
+        } else {
+            h.group = target == -2 ? -1 : target;
+            m_settings.hosts.push_back(std::move(h));
+            m_hostState.push_back({m_nextHostId++});
+        }
+    }
+    m_expandedHost = -1;
+    SaveHosts();
+    SyncPinger();
+    Relayout();
+    SetStatus(L"Imported " + std::to_wstring(in.size()) + (in.size() == 1 ? L" host" : L" hosts"), theme::Green, 3000);
 }
 
 void MainWindow::SetHostPing(int i, bool on) {

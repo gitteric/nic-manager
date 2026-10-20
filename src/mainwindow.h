@@ -181,8 +181,10 @@ private:
     // menus
     void ShowTrayMenu();
     void ShowAdapterMenu(int ai, POINT screen);
-    void ShowHostMenu(int rowIndex, POINT screen);  // host or group row: ping on/off
+    void ShowHostMenu(int rowIndex, POINT screen);  // host or group row: ping on/off, export; HOSTS: export
     void SetHostPing(int i, bool on);  // caller saves and syncs the pinger
+    void ExportHosts(int group, int host);  // one host, one group with its hosts, or (-1, -1) all
+    void ImportHosts();
     void ShowWindowNear(bool show = true);
     void ToggleVisible();
     void ShowRestored();

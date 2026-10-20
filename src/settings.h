@@ -47,6 +47,15 @@ AppSettings Load();
 void SaveGeneral(const AppSettings& s);  // cycle, window position, flags, show hidden, design
 void SaveHosts(const std::vector<HostEntry>& hosts, const std::vector<HostGroup>& groups);
 void SavePresets(const std::vector<Preset>& presets);
+
+// Host export file (UTF-8 JSON): {"format":"nic-manager-hosts","version":1,"groups":[...],"hosts":[...]}.
+// Passwords stay DPAPI-encrypted, so they only come back for the same Windows user.
+// withGroups=false (a single host): no groups and no group reference.
+std::string HostsExportJson(const std::vector<HostEntry>& hosts, const std::vector<HostGroup>& groups,
+                            bool withGroups);
+// hosts[i].group: index into groups, -1 top level, -2 not given (an existing host keeps its group).
+bool HostsImportJson(const std::string& utf8, std::vector<HostEntry>& hosts, std::vector<HostGroup>& groups,
+                     std::wstring* err);
 void SaveTightVncPath(const std::wstring& path);
 void SaveExpandedAdapter(const std::wstring& guid);  // empty: none
 void SaveHiddenAdapters(const std::vector<std::wstring>& guids);

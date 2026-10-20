@@ -33,6 +33,11 @@ bool EditAction(HWND owner, HostAction& action, const std::wstring& hostAddress,
 
 // List with delete / export / import. Returns true if `presets` changed.
 bool ManagePresets(HWND owner, std::vector<Preset>& presets);
+// Asks for a preset file and merges it (same name: the file wins). Returns the number
+// imported, -1 when cancelled or the file was refused (already reported).
+int ImportPresets(HWND owner, std::vector<Preset>& presets);
+// Open/save dialog for a .json file.
+bool PickJsonFile(HWND owner, bool save, const std::wstring& defaultName, std::wstring& path);
 
 // Read-only result list: one row per entry, cells shown in tab-aligned
 // columns. Copy puts the selected rows (or all) on the clipboard. With

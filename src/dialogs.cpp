@@ -422,8 +422,13 @@ std::vector<int> SelectedIndices(HWND dlg, int id = IDC_PRESET_LIST) {
     return idx;
 }
 
-bool FileDialog(HWND owner, bool save, std::wstring& path) {
-    wchar_t buf[MAX_PATH] = L"ipv4-presets.json";
+bool FileDialog(HWND owner, bool save, std::wstring& path, const std::wstring& defaultName = L"ipv4-presets.json") {
+    wchar_t buf[MAX_PATH] = {};
+    // A default name without characters Windows refuses in file names.
+    std::wstring name = defaultName.substr(0, MAX_PATH - 1);
+    for (auto& ch : name)
+        if (wcschr(L"\\/:*?\"<>|", ch)) ch = L'_';
+    wcscpy_s(buf, name.c_str());
     OPENFILENAMEW ofn{sizeof(ofn)};
     ofn.hwndOwner = owner;
     ofn.lpstrFilter = L"JSON files (*.json)\0*.json\0All files (*.*)\0*.*\0";
@@ -438,8 +443,22 @@ bool FileDialog(HWND owner, bool save, std::wstring& path) {
 }
 
 void UpdatePresetButtons(HWND dlg, const std::vector<Preset>& presets) {
-    EnableWindow(GetDlgItem(dlg, IDC_DELETE), !SelectedIndices(dlg).empty());
+    const size_t sel = SelectedIndices(dlg).size();
+    EnableWindow(GetDlgItem(dlg, IDC_DELETE), sel > 0);
     EnableWindow(GetDlgItem(dlg, IDC_EXPORT), !presets.empty());
+    // A click toggles a preset; with none selected, Export takes all of them.
+    SetDlgItemTextW(dlg, IDC_EXPORT, sel ? L"Export..." : L"Export all...");
+}
+
+// Same name (case-insensitive) replaces the existing preset; returns the number imported.
+int MergePresets(std::vector<Preset>& presets, const std::vector<Preset>& in) {
+    for (const auto& p : in) {
+        auto it = std::find_if(presets.begin(), presets.end(),
+                               [&](const Preset& e) { return _wcsicmp(e.name.c_str(), p.name.c_str()) == 0; });
+        if (it != presets.end()) *it = p;
+        else presets.push_back(p);
+    }
+    return (int)in.size();
 }
 
 INT_PTR CALLBACK PresetsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
@@ -493,12 +512,7 @@ INT_PTR CALLBACK PresetsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 MessageBoxW(dlg, err.c_str(), L"Import failed", MB_OK | MB_ICONERROR);
                 break;
             }
-            for (auto& p : in) {  // same name replaces the existing preset
-                auto it = std::find_if(presets.begin(), presets.end(),
-                                       [&](const Preset& e) { return _wcsicmp(e.name.c_str(), p.name.c_str()) == 0; });
-                if (it != presets.end()) *it = p;
-                else presets.push_back(p);
-            }
+            MergePresets(presets, in);
             d->changed = d->changed || !in.empty();
             FillPresetList(dlg, presets);
             UpdatePresetButtons(dlg, presets);
@@ -664,6 +678,24 @@ bool ManagePresets(HWND owner, std::vector<Preset>& presets) {
     PresetsData d{&presets};
     DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_PRESETS), owner, PresetsProc, (LPARAM)&d);
     return d.changed;
+}
+
+bool PickJsonFile(HWND owner, bool save, const std::wstring& defaultName, std::wstring& path) {
+    return FileDialog(owner, save, path, defaultName);
+}
+
+int ImportPresets(HWND owner, std::vector<Preset>& presets) {
+    std::wstring path, err;
+    std::string data;
+    if (!FileDialog(owner, false, path)) return -1;
+    std::vector<Preset> in;
+    if (!settings::ReadFileUtf8(path, data)) err = L"Could not read " + path;
+    else settings::PresetsFromJson(data, in, &err);
+    if (!err.empty()) {
+        MessageBoxW(owner, err.c_str(), L"Import failed", MB_OK | MB_ICONERROR);
+        return -1;
+    }
+    return MergePresets(presets, in);
 }
 
 }  // namespace dialogs

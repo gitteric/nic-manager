@@ -21,12 +21,13 @@ framework, no runtime to install, no third-party libraries.
 **Adapters**
 - See every adapter at a glance: name, address and state (connected, disconnected, disabled).
 - Enable or disable an adapter, switch DHCP on or off, and edit IP addresses (several per adapter), gateways and DNS servers inline.
-- Save an adapter's configuration as a preset and apply it to any adapter later. Presets can be exported to and imported from JSON.
+- Save an adapter's configuration as a preset and apply it to any adapter later. Presets can be exported to and imported from JSON (preset dialog, or tray menu Import > Presets).
 - Flush the DNS cache, renew DHCP leases, open the classic Network Connections window, and open the Windows Wi-Fi picker from a Wi-Fi adapter.
 
 **Hosts**
 - A ping list with names and live state (green: reachable, red: not reachable, with round-trip time in the tooltip). The ping cycle is adjustable from 0.1 s to 30 s, and pinging can be turned off per host in its edit dialog or its right-click menu (the marker then stays grey).
 - Optional groups (folder button next to +): fold and unfold them, add hosts with the group's +, drag hosts between groups and the top level. A group's ping switch applies on top of each host's own; removing a group asks whether its hosts go with it or move to the top level.
+- Right-click on the HOSTS header, a group or a host exports it as JSON; tray menu Import > Hosts merges such a file (same name: the file wins).
 - Actions per host, started with one click:
   - **RDP** with a temporary `.rdp` file that holds the encrypted password (only clipboard redirection).
   - **SSH** in a console window with the Windows OpenSSH client, logged in with the stored password.

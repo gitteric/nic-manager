@@ -151,14 +151,15 @@ bool ConfigFromJson(const json::Value& o, Ipv4Config& c, std::wstring* err) {
     return true;
 }
 
-json::Value HostsToJson(const std::vector<HostEntry>& hosts) {
+// groupRef: 0 only when set (registry), 1 always (export with groups), 2 never (single host).
+json::Value HostsToJson(const std::vector<HostEntry>& hosts, int groupRef = 0) {
     json::Value arr = json::Value::Array();
     for (const auto& h : hosts) {
         json::Value o = json::Value::Object();
         o.Set("name", Str(h.name));
         o.Set("address", Str(h.address));
         o.Set("ping", h.ping);
-        if (h.group >= 0) o.Set("group", h.group);
+        if (groupRef == 1 || (groupRef == 0 && h.group >= 0)) o.Set("group", h.group);
         json::Value acts = json::Value::Array();
         for (const auto& a : h.actions) {
             json::Value j = json::Value::Object();
@@ -188,6 +189,30 @@ json::Value HostsToJson(const std::vector<HostEntry>& hosts) {
     return arr;
 }
 
+json::Value GroupsToJson(const std::vector<HostGroup>& groups) {
+    json::Value arr = json::Value::Array();
+    for (const auto& g : groups) {
+        json::Value o = json::Value::Object();
+        o.Set("name", Str(g.name));
+        o.Set("ping", g.ping);
+        o.Set("expanded", g.expanded);
+        arr.Push(std::move(o));
+    }
+    return arr;
+}
+
+std::vector<HostGroup> GroupsFromJson(const json::Value& arr) {
+    std::vector<HostGroup> groups;
+    for (const auto& o : arr.Items()) {
+        HostGroup g;
+        g.name = Trim(WStr(o["name"]));
+        g.ping = o["ping"].AsBool(true);
+        g.expanded = o["expanded"].AsBool(true);
+        groups.push_back(std::move(g));
+    }
+    return groups;
+}
+
 std::vector<HostEntry> HostsFromJson(const json::Value& arr) {
     std::vector<HostEntry> hosts;
     for (const auto& o : arr.Items()) {
@@ -197,7 +222,7 @@ std::vector<HostEntry> HostsFromJson(const json::Value& arr) {
         h.name = Trim(WStr(o["name"]));
         if (h.name.empty()) h.name = h.address;
         h.ping = o["ping"].AsBool(true);
-        h.group = o["group"].AsInt(-1);
+        h.group = o["group"].IsNumber() ? o["group"].AsInt(-1) : -2;  // -2: no group given
         for (const auto& j : o["actions"].Items()) {
             std::string type = j["type"].AsString();
             HostAction a;
@@ -322,13 +347,7 @@ AppSettings Load() {
     json::Value hosts, groups;
     if (json::Parse(WideToUtf8(ReadString(L"Hosts")), hosts) && hosts.IsArray()) s.hosts = HostsFromJson(hosts);
     if (json::Parse(WideToUtf8(ReadString(L"HostGroups")), groups) && groups.IsArray())
-        for (const auto& o : groups.Items()) {
-            HostGroup g;
-            g.name = Trim(WStr(o["name"]));
-            g.ping = o["ping"].AsBool(true);
-            g.expanded = o["expanded"].AsBool(true);
-            s.groups.push_back(std::move(g));
-        }
+        s.groups = GroupsFromJson(groups);
     for (auto& h : s.hosts)
         if (h.group < -1 || h.group >= (int)s.groups.size()) h.group = -1;  // dangling reference: top level
     PresetsFromJson(WideToUtf8(ReadString(L"Presets")), s.presets, nullptr);
@@ -350,15 +369,42 @@ void SaveGeneral(const AppSettings& s) {
 
 void SaveHosts(const std::vector<HostEntry>& hosts, const std::vector<HostGroup>& groups) {
     WriteString(L"Hosts", Utf8ToWide(json::Write(HostsToJson(hosts), false)));
-    json::Value arr = json::Value::Array();
-    for (const auto& g : groups) {
-        json::Value o = json::Value::Object();
-        o.Set("name", Str(g.name));
-        o.Set("ping", g.ping);
-        o.Set("expanded", g.expanded);
-        arr.Push(std::move(o));
+    WriteString(L"HostGroups", Utf8ToWide(json::Write(GroupsToJson(groups), false)));
+}
+
+std::string HostsExportJson(const std::vector<HostEntry>& hosts, const std::vector<HostGroup>& groups,
+                            bool withGroups) {
+    json::Value root = json::Value::Object();
+    root.Set("format", "nic-manager-hosts");
+    root.Set("version", 1);
+    if (withGroups) root.Set("groups", GroupsToJson(groups));
+    root.Set("hosts", HostsToJson(hosts, withGroups ? 1 : 2));
+    return json::Write(root, true);
+}
+
+bool HostsImportJson(const std::string& utf8, std::vector<HostEntry>& hosts, std::vector<HostGroup>& groups,
+                     std::wstring* err) {
+    json::Value root;
+    std::string perr;
+    if (!json::Parse(utf8, root, &perr)) {
+        if (err) *err = L"Not valid JSON: " + Utf8ToWide(perr);
+        return false;
     }
-    WriteString(L"HostGroups", Utf8ToWide(json::Write(arr, false)));
+    const json::Value& arr = root.IsArray() ? root : root["hosts"];  // also a bare array of hosts
+    if (!arr.IsArray()) {
+        if (err) *err = L"No \"hosts\" array found";
+        return false;
+    }
+    groups = root.IsObject() ? GroupsFromJson(root["groups"]) : std::vector<HostGroup>{};
+    for (const auto& g : groups)
+        if (g.name.empty()) {
+            if (err) *err = L"Group without a name";
+            return false;
+        }
+    hosts = HostsFromJson(arr);
+    for (auto& h : hosts)
+        if (h.group >= (int)groups.size() || h.group < -2) h.group = -1;
+    return true;
 }
 
 void SavePresets(const std::vector<Preset>& presets) { WriteString(L"Presets", Utf8ToWide(PresetsToJson(presets))); }
