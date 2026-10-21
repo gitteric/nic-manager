@@ -12,63 +12,139 @@ framework, no runtime to install, no third-party libraries.
 
 <p>
   <img src="docs/overview.png" alt="Main window with adapters and hosts" width="300">
-  &nbsp;
-  <img src="docs/adapter.png" alt="Adapter with static addresses, DNS and gateway" width="300">
 </p>
 
 ## Features
 
-**Adapters**
-- See every adapter at a glance: name, address and state (connected, disconnected, disabled).
-- Enable or disable an adapter, switch DHCP on or off, and edit IP addresses (several per adapter), gateways and DNS servers inline.
-- Save an adapter's configuration as a preset and apply it to any adapter later. Presets can be exported to and imported from JSON (preset dialog, or tray menu Import > Presets).
-- Flush the DNS cache, renew DHCP leases, open the classic Network Connections window, and open the Windows Wi-Fi picker from a Wi-Fi adapter.
+The screenshots were taken with `--demo` (sample adapters, nothing is changed).
 
-**Hosts**
-- A ping list with names and live state (green: reachable, red: not reachable, with round-trip time in the tooltip). The ping cycle is adjustable from 0.1 s to 30 s, and pinging can be turned off per host in its edit dialog or its right-click menu (the marker then stays grey).
-- Optional groups (folder button next to +): fold and unfold them, add hosts with the group's +, drag hosts between groups and the top level. A group's ping switch applies on top of each host's own; removing a group asks whether its hosts go with it or move to the top level.
-- Right-click on the HOSTS header, a group or a host exports it as JSON; tray menu Import > Hosts merges such a file (same name: the file wins).
-- Actions per host, started with one click:
-  - **RDP** with a temporary `.rdp` file that holds the encrypted password (only clipboard redirection).
-  - **SSH** in a console window with the Windows OpenSSH client, logged in with the stored password.
+### Adapters
+
+<p>
+  <img src="docs/adapter.png" alt="Expanded adapter with addresses, DNS servers and gateway" width="300">
+</p>
+
+- Every adapter with name, address and state: green connected, red disconnected, grey disabled.
+- Click an adapter to expand it. Switch it on or off, turn DHCP and Auto DNS on or off.
+- Add, edit (also by double-click) and remove IP addresses, DNS servers and gateways inline. An adapter can have several addresses.
+- Wi-Fi adapters get a button that opens the Windows Wi-Fi picker.
+
+**Right-click menu**
+
+<p>
+  <img src="docs/adapter-menu.png" alt="Adapter right-click menu with the Apply preset submenu" width="300">
+</p>
+
+- **Apply preset**: sets the adapter to a saved IPv4 configuration.
+- **Save IPv4 config as preset...**: stores the current configuration under a name.
+- **Hidden**: leaves the adapter out of the list (the eye button in the bottom bar shows it again).
+- **Refresh**: reads all adapters again.
+
+### Hosts
+
+<p>
+  <img src="docs/hosts.png" alt="Host list with groups and actions" width="300">
+</p>
+
+- A ping list with live state: green reachable, red not reachable, grey ping off. The tooltip shows the round-trip time.
+- Each host can have actions, started with one click on ▶:
+  - **RDP** with the stored, encrypted password (temporary `.rdp` file).
+  - **SSH** in a console window with the Windows OpenSSH client.
   - **VNC** with the TightVNC viewer.
   - **Browser** with the default browser.
-- Passwords are encrypted with Windows DPAPI, so only your Windows account on this PC can decrypt them.
+- Groups: fold and unfold them, add hosts with the group's +, and drag hosts between groups and the top level. A group with ping off turns ping off for all its hosts.
+- Removing a group asks whether its hosts are removed too or move to the top level.
+- Passwords are encrypted with Windows DPAPI: only your Windows account on this PC can read them.
 
 <p>
-  <img src="docs/hosts.png" alt="Host with RDP and VNC actions" width="300">
+  <img src="docs/host-dialog.png" alt="Host dialog" width="325">
   &nbsp;
-  <img src="docs/action-dialog.png" alt="Action dialog" width="300">
+  <img src="docs/action-dialog.png" alt="Action dialog" width="325">
 </p>
 
-**Subnet scan**
-- Each IP address has a scan button that offers an ARP scan, a ping scan or a TCP port check of its subnet (/24 or smaller). It is built in: no nmap, no Npcap, no administrator rights needed.
-- Addresses are probed in parallel and the bottom bar shows the progress. The button turns into X while a scan runs, so you can stop it and still get the hosts found so far.
-- The result list is sorted by address and shows name (reverse DNS / NetBIOS), MAC and vendor (from the [IEEE OUI registry](https://standards-oui.ieee.org/), embedded in the exe). You can copy entries or add them to the ping list.
+**Right-click menu**
 
 <p>
-  <img src="docs/scan-menu.png" alt="Scan menu on an IP address" width="440">
+  <img src="docs/host-menu.png" alt="Host right-click menu" width="300">
 </p>
+
+- On a host or group: **Ping** switches pinging on or off, **Export...** saves it as JSON (a group with its hosts).
+- On the HOSTS header: **Export...** saves all hosts and groups.
+- Tray menu **Import > Hosts...** reads such a file back. Entries with the same name are replaced by the file's.
+
+### Subnet scan
+
+<p>
+  <img src="docs/scan-menu.png" alt="Scan menu on an IP address" width="367">
+</p>
+
+- The magnifier next to an IP address scans its subnet (/24 or smaller): ARP, ping or a TCP port.
+- Built in: no nmap, no Npcap, no administrator rights.
+- The bottom bar shows the progress. The magnifier turns into X while the scan runs; stopping keeps the hosts found so far.
+
 <p>
   <img src="docs/scan-progress.png" alt="Scan progress in the bottom bar" width="300">
 </p>
+
+- The result shows address, name, MAC and vendor (from the [IEEE OUI registry](https://standards-oui.ieee.org/), embedded in the exe). Entries can be copied or added to the ping list.
+
 <p>
-  <img src="docs/scan-result.png" alt="Scan result list" width="525">
+  <img src="docs/scan-result.png" alt="Scan result" width="525">
 </p>
 
-**Window and tray**
-- Lives in the tray. "Minimize to tray" decides whether it also has a taskbar button.
-- Stays inside the screen and snaps to its edges. It can stay always on top.
-- Errors show in a strip at the bottom that hides itself after 5 seconds; their details can be copied.
-- **Start without UAC prompt:** changing adapters needs administrator rights. NIC Manager can register a scheduled task that starts it elevated without the prompt, optionally at logon (minimized) and with a desktop shortcut.
+### Tray menu
 
-The screenshots were taken with `--demo` (sample adapters, nothing is changed).
+<p>
+  <img src="docs/tray-menu.png" alt="Tray menu with the Import submenu" width="282">
+</p>
+
+- A left click on the tray icon shows or hides the window.
+- **Edit presets**: the saved IPv4 presets, with delete, export (the selected ones, or all) and import.
+- **Import**: hosts or presets from a JSON file.
+- **Ping cycle**: 0.5 s to 30 s, or a custom value from 0.1 s.
+- **Always on top**, **Minimize to tray** (without it the window also has a taskbar button). The window stays inside the screen and snaps to its edges.
+- **Design**: Standard or Color-blind friendly (blue/orange instead of green/red).
+- **Start without UAC prompt**: registers a scheduled task that starts NIC Manager elevated without the prompt, optionally at logon and with a desktop shortcut.
+- **Trust signing certificate** (signed builds only): shows NIC Manager as verified publisher.
+
+<p>
+  <img src="docs/presets.png" alt="Preset dialog" width="350">
+</p>
+
+### Icons
+
+| | |
+|---|---|
+| <img src="docs/icons/add.png" width="18"> | Add a host, an address, a DNS server, a gateway or an action |
+| <img src="docs/icons/add-group.png" width="18"> | Add a host group |
+| <img src="docs/icons/edit.png" width="18"> | Edit |
+| <img src="docs/icons/delete.png" width="18"> | Remove |
+| <img src="docs/icons/run.png" width="18"> | Run the action |
+| <img src="docs/icons/scan.png" width="18"> | Scan the subnet |
+| <img src="docs/icons/wifi.png" width="18"> | Choose a Wi-Fi network |
+| <img src="docs/icons/folder.png" width="18"> | Host group |
+| <img src="docs/icons/expand.png" width="18"> | Expand or collapse |
+| <img src="docs/icons/ncpa.png" width="18"> | Bottom bar: open Network Connections (ncpa.cpl) |
+| <img src="docs/icons/dns.png" width="18"> | Bottom bar: flush the DNS cache |
+| <img src="docs/icons/renew.png" width="18"> | Bottom bar: renew the DHCP lease (expanded adapter, or all) |
+| <img src="docs/icons/hidden.png" width="18"> | Bottom bar: show or leave out hidden adapters |
+
+### Rights
+
+NIC Manager checks its rights at start:
+
+- **Administrator** (your own account, elevated): everything.
+- **Elevated as another account** (Intune Endpoint Privilege Management, "Run as administrator" with someone else's credentials): everything except the start task. Settings then come from that account's registry.
+- **Standard user**: adapter settings are read-only. Hosts, ping, actions, scans, flushing DNS, presets and import/export work.
+
+Errors show in a strip at the bottom that hides itself after 5 seconds; their details can be copied.
 
 ## Download
 
 Ready-built executables for x64 and x86 are attached to each
-[release](../../releases). Run `NicManager.exe`; it asks for administrator
-rights because changing adapter settings needs them.
+[release](../../releases). Run `NicManager.exe`; administrators get the UAC
+prompt, because changing adapter settings needs elevation. Standard users
+start without a prompt in read-only mode, or use "Run as administrator".
 
 ## Building from source on Windows
 

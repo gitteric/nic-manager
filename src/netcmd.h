@@ -55,4 +55,14 @@ void OpenNetworkConnections();  // classic "Network Connections" (ncpa.cpl)
 void OpenWifiPicker();          // Windows' list of available Wi-Fi networks
 bool IsElevated();
 
+// What this process may do.
+//   User:     not elevated; IP settings cannot be changed.
+//   Elevated: elevated, but under another account than the signed-in user
+//             (Intune Endpoint Privilege Management, "Run as" with an admin's
+//             credentials). Everything works except the start task, which
+//             would be registered for that other account.
+//   Admin:    the signed-in user's own elevated token.
+enum class Rights { User, Elevated, Admin };
+Rights CurrentRights();
+
 }  // namespace netcmd

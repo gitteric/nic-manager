@@ -1,6 +1,7 @@
 #include "netcmd.h"
 
 #include <shellapi.h>
+#include <wtsapi32.h>
 
 #include <algorithm>
 #include <vector>
@@ -238,6 +239,47 @@ bool IsElevated() {
                     elevation.TokenIsElevated;
     CloseHandle(token);
     return elevated;
+}
+
+Rights CurrentRights() {
+    if (!IsElevated()) return Rights::User;
+    // Account of this process's token ...
+    std::wstring tokenUser, tokenDomain;
+    HANDLE token = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        DWORD size = 0;
+        GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+        std::vector<BYTE> buf(size);
+        if (size && GetTokenInformation(token, TokenUser, buf.data(), size, &size)) {
+            wchar_t name[256], domain[256];
+            DWORD nlen = 256, dlen = 256;
+            SID_NAME_USE use;
+            if (LookupAccountSidW(nullptr, reinterpret_cast<TOKEN_USER*>(buf.data())->User.Sid, name, &nlen, domain,
+                                  &dlen, &use)) {
+                tokenUser = name;
+                tokenDomain = domain;
+            }
+        }
+        CloseHandle(token);
+    }
+    // ... against the user signed in to this session.
+    std::wstring sessionUser, sessionDomain;
+    auto query = [](WTS_INFO_CLASS what) {
+        LPWSTR p = nullptr;
+        DWORD bytes = 0;
+        std::wstring v;
+        if (WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, what, &p, &bytes) && p) {
+            v = p;
+            WTSFreeMemory(p);
+        }
+        return v;
+    };
+    sessionUser = query(WTSUserName);
+    sessionDomain = query(WTSDomainName);
+    if (tokenUser.empty() || sessionUser.empty()) return Rights::Admin;  // cannot tell: keep the old behaviour
+    bool same = _wcsicmp(tokenUser.c_str(), sessionUser.c_str()) == 0 &&
+                _wcsicmp(tokenDomain.c_str(), sessionDomain.c_str()) == 0;
+    return same ? Rights::Admin : Rights::Elevated;
 }
 
 }  // namespace netcmd

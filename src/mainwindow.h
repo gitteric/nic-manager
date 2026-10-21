@@ -148,6 +148,8 @@ private:
     void OnRButtonUp(POINT pt);
     void Execute(const Row* row, Cmd cmd);
     bool IsBlockedWhileBusy(Cmd cmd) const;
+    bool CanChangeAdapters() const { return m_elevated || m_demo; }
+    static bool NeedsAdmin(Cmd cmd);
 
     // inline editing
     void BeginEdit(EditKind kind, int adapterOrHost, int index, const std::wstring& text, bool fromDhcp = false);
@@ -209,7 +211,8 @@ private:
     HFONT m_font = nullptr, m_fontBold = nullptr, m_fontSmall = nullptr, m_fontIcon = nullptr;
     HICON m_iconSmall = nullptr, m_iconLarge = nullptr;
     UINT m_taskbarCreated = 0;
-    bool m_elevated = false;
+    netcmd::Rights m_rights = netcmd::Rights::User;
+    bool m_elevated = false;  // m_rights != User
     bool m_demo = false;
     int m_startTask = -1;  // -1 unknown, 0 none, 1 on demand, 2 on demand + autostart
 

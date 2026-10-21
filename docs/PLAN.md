@@ -97,7 +97,9 @@ VS Code works well for this. It edits, builds through CMake Tools, and debugs. T
    - `msvc-x64` / `msvc-x86`: only if VS 2022 Build Tools are installed.
 4. Build with **F7** (or *CMake: Build*). Debug with **F5**, which uses gdb from MSYS2.
 
-The normal build requests administrator rights, because netsh needs them to change adapters. To debug that build, start VS Code as administrator. Otherwise, use the `mingw-x64-noadmin` preset: the UI, ping list and presets all work, and applying a change shows an "access denied" message. Running `NicManager.exe --demo` shows sample adapters and only simulates commands, which is handy for UI work.
+The normal build's manifest uses `highestAvailable`: administrators get the UAC prompt (netsh needs elevation to change adapters), standard users start without one. To debug that build elevated, start VS Code as administrator. Otherwise, use the `mingw-x64-noadmin` preset (`asInvoker`): the UI, ping list and presets all work, and the adapter settings are read-only.
+
+At start `netcmd::CurrentRights()` sorts the process into three levels. *User*: not elevated; adapter toggles, edit buttons, "Renew DHCP", "Apply preset" and "Trust signing certificate" are disabled. *Elevated*: elevated, but the token's account differs from the session user (`WTSQuerySessionInformation`), as with Intune EPM, which elevates under a virtual account; everything works except the start task, since schtasks would register it for that account and fails on the principal. *Admin*: the session user's own elevated token; everything, including the start task and its upgrade at start. Running `NicManager.exe --demo` shows sample adapters and only simulates commands, which is handy for UI work.
 
 From a terminal:
 

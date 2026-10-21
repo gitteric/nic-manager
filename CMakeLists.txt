@@ -8,12 +8,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Changing adapter settings needs admin rights. Turn this OFF for a
-# debug build that you want to start from a non-elevated VS Code (the UI,
-# ping list and presets work; applying changes then fails with a message).
+# Changing adapter settings needs admin rights. highestAvailable asks
+# administrators for elevation and starts standard users without a prompt,
+# with adapter settings read-only. Turn this OFF for a debug build that you
+# want to start from a non-elevated VS Code (same read-only mode for admins).
 option(NICMGR_REQUIRE_ADMIN "Embed a manifest that requests elevation" ON)
 if(NICMGR_REQUIRE_ADMIN)
-    set(NICMGR_EXEC_LEVEL requireAdministrator)
+    set(NICMGR_EXEC_LEVEL highestAvailable)
 else()
     set(NICMGR_EXEC_LEVEL asInvoker)
 endif()
@@ -57,10 +58,10 @@ target_compile_definitions(NicManager PRIVATE
 
 # All system libraries that ship with Windows; no third-party dependencies.
 target_link_libraries(NicManager PRIVATE
-    iphlpapi ws2_32 setupapi cfgmgr32 comctl32 comdlg32 shell32 advapi32 crypt32 uxtheme dwmapi ole32 uuid)
+    iphlpapi ws2_32 setupapi cfgmgr32 comctl32 comdlg32 shell32 advapi32 crypt32 uxtheme dwmapi ole32 uuid wtsapi32)
 
 set_property(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/app.rc APPEND PROPERTY OBJECT_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/res/app.ico;${CMAKE_CURRENT_SOURCE_DIR}/res/oui.bin")
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/app.ico;${CMAKE_CURRENT_SOURCE_DIR}/res/oui.bin;${CMAKE_CURRENT_BINARY_DIR}/app.manifest")
 if(EXISTS "${NICMGR_CERT}")
     target_compile_definitions(NicManager PRIVATE NICMGR_HAS_CERT=1)
     set_property(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/app.rc APPEND PROPERTY OBJECT_DEPENDS "${NICMGR_CERT}")

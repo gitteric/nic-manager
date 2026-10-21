@@ -142,7 +142,8 @@ bool MainWindow::Create(HINSTANCE inst, bool demo, bool minimized) {
     m_settings = settings::Load();
     theme::Apply(m_settings.design);
     m_expandedAdapter = m_settings.expandedAdapter;  // dropped on the first adapter list if it is gone
-    m_elevated = netcmd::IsElevated();
+    m_rights = netcmd::CurrentRights();
+    m_elevated = m_rights != netcmd::Rights::User;
     for (size_t i = 0; i < m_settings.hosts.size(); ++i) m_hostState.push_back({m_nextHostId++});
 
     m_iconSmall = LoadAppIcon(inst, GetSystemMetrics(SM_CXSMICON));
@@ -210,9 +211,11 @@ void MainWindow::OnCreate() {
     m_pinger.SetCycle(m_settings.pingCycleMs);
     SyncPinger();
     m_monitor.Start(m_hwnd, WM_APP_ADAPTERS, m_demo);
-    if (m_elevated && !m_demo) std::thread(starttask::Upgrade).detach();  // a few schtasks calls, off the UI thread
+    if (m_rights == netcmd::Rights::Admin && !m_demo) std::thread(starttask::Upgrade).detach();  // a few schtasks calls, off the UI thread
     if (m_demo) SetStatus(L"Demo mode", theme::Accent, 8000);
-    else if (!m_elevated) SetStatus(L"Read-only: not elevated", theme::TextDim, 8000);
+    else if (!m_elevated) SetStatus(L"Not elevated: adapter settings are read-only", theme::TextDim, 8000);
+    else if (m_rights == netcmd::Rights::Elevated)
+        SetStatus(L"Elevated under another account: start task not available", theme::TextDim, 8000);
     Relayout();
 }
 
@@ -643,20 +646,21 @@ void MainWindow::AddAdapterDetails(int ai) {
     const Adapter& a = m_adapters[ai];
     const Ipv4Config& c = a.cfg;
     const bool isStatic = !c.dhcp;
+    const bool rw = CanChangeAdapters();
 
     auto toggle = [&](const wchar_t* label, bool on, bool enabled, Cmd cmd) {
         Row& r = Push(RowKind::Toggle, M.toggle);
         r.adapter = ai;
         r.text = label;
         r.on = on;
-        r.toggleEnabled = enabled;
+        r.toggleEnabled = enabled && rw;
         r.toggleCmd = cmd;
     };
     auto caption = [&](const wchar_t* label, bool canAdd, Cmd addCmd, const wchar_t* tip) {
         Row& r = Push(RowKind::Caption, M.caption);
         r.adapter = ai;
         r.text = label;
-        if (canAdd) r.buttons.push_back({kGlyphAdd, addCmd, tip});
+        if (canAdd && rw) r.buttons.push_back({kGlyphAdd, addCmd, tip});
     };
     auto value = [&](const std::wstring& text, int index, EditKind kind, bool canEdit, Cmd edit, bool canDel,
                      Cmd del) {
@@ -667,12 +671,12 @@ void MainWindow::AddAdapterDetails(int ai) {
         r.editKind = kind;
         r.editSlot = kind != EditKind::None && m_editTarget.kind == kind && m_editTarget.guid == a.guid &&
                      m_editTarget.index == index;
-        if (canEdit) {
+        if (canEdit && rw) {
             r.dblCmd = edit;
             r.tip = L"Double-click to edit";
             r.buttons.push_back({kGlyphEdit, edit, L"Edit"});
         }
-        if (canDel) r.buttons.push_back({kGlyphDelete, del, L"Remove"});
+        if (canDel && rw) r.buttons.push_back({kGlyphDelete, del, L"Remove"});
     };
     auto newSlot = [&](EditKind kind) {
         if (m_editTarget.kind == kind && m_editTarget.guid == a.guid) value(L"", -1, kind, false, Cmd::None, false, Cmd::None);
@@ -703,7 +707,7 @@ void MainWindow::AddAdapterDetails(int ai) {
         // Editable under DHCP too: committing the edit switches the adapter to static.
         value(ip::Format(c.addresses[k]), k, EditKind::Address, true, Cmd::EditAddr, isStatic && k > 0,
               Cmd::DelAddr);
-        if (!isStatic) {
+        if (!isStatic && rw) {
             m_rows.back().tip = L"Double-click to edit (switches DHCP off and keeps the other values as static)";
             m_rows.back().buttons.back().tip = L"Edit (switches DHCP off)";
         }
@@ -888,12 +892,13 @@ void MainWindow::OnPaint() {
     Fill(dc, title, theme::Bg);
     RECT tt{M.pad, 0, client.right - 2 * M.title, M.title};
     DrawStr(dc, m_fontBold, L"NIC Manager", tt, theme::TextDim);
-    if (!m_elevated) {
+    if (m_rights != netcmd::Rights::Admin) {
         SIZE sz;
         SelectObject(dc, m_fontBold);
         GetTextExtentPoint32W(dc, L"NIC Manager", 11, &sz);
         RECT nr{tt.left + sz.cx + S(6), 0, tt.right, M.title};
-        DrawStr(dc, m_fontSmall, L"not elevated", nr, theme::Red);
+        if (!m_elevated) DrawStr(dc, m_fontSmall, L"not elevated", nr, theme::Red);
+        else DrawStr(dc, m_fontSmall, L"elevated as another account", nr, theme::TextDim);
     }
 
     // Bottom bar.
@@ -1073,7 +1078,7 @@ void MainWindow::PaintButton(HDC dc, const Button& b, RECT rc, bool hover, HFONT
                               ? theme::Red
                               : theme::Text)
                        : theme::TextDim;
-    if (m_busy && IsBlockedWhileBusy(b.cmd)) c = theme::TextDisabled;
+    if ((m_busy && IsBlockedWhileBusy(b.cmd)) || (NeedsAdmin(b.cmd) && !CanChangeAdapters())) c = theme::TextDisabled;
     DrawGlyph(dc, font, b.glyph, rc, c);
 }
 
@@ -1305,10 +1310,28 @@ bool MainWindow::IsBlockedWhileBusy(Cmd cmd) const {
            cmd != Cmd::Minimize && cmd != Cmd::OpenWifi && cmd != Cmd::OpenNcpa && cmd != Cmd::StopScan;
 }
 
+bool MainWindow::NeedsAdmin(Cmd cmd) {
+    switch (cmd) {
+    case Cmd::ToggleEnabled: case Cmd::ToggleDhcp: case Cmd::ToggleAutoDns:
+    case Cmd::EditAddr: case Cmd::DelAddr: case Cmd::AddAddr:
+    case Cmd::EditGw: case Cmd::DelGw: case Cmd::AddGw:
+    case Cmd::EditDns: case Cmd::DelDns: case Cmd::AddDns:
+    case Cmd::RenewDhcp:
+        return true;
+    default:
+        return false;
+    }
+}
+
 void MainWindow::Execute(const Row* rowp, Cmd cmd) {
     Row row = rowp ? *rowp : Row{};
     if (m_busy && IsBlockedWhileBusy(cmd)) {
         MessageBeep(MB_OK);
+        return;
+    }
+    if (NeedsAdmin(cmd) && !CanChangeAdapters()) {
+        MessageBeep(MB_OK);
+        SetStatus(L"Needs administrator rights", theme::TextDim, 3000);
         return;
     }
     const Adapter* a = row.adapter >= 0 && row.adapter < (int)m_adapters.size() ? &m_adapters[row.adapter] : nullptr;
@@ -1724,6 +1747,10 @@ void MainWindow::EndEdit() {
 
 void MainWindow::ApplyConfig(const Adapter& a, const Ipv4Config& cfg) {
     if (cfg == a.cfg) return;
+    if (!CanChangeAdapters()) {
+        SetStatus(L"Needs administrator rights", theme::TextDim, 3000);
+        return;
+    }
     std::wstring name = a.name;
     Ipv4Config prev = a.cfg;
     RunJob(L"Applying IPv4 settings", [name, prev, cfg](const netcmd::Deadline& dl) {
@@ -2125,13 +2152,20 @@ void MainWindow::ShowTrayMenu() {
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(design), L"Design");
     if (m_startTask < 0) m_startTask = starttask::IsInstalled() ? (starttask::AutostartInstalled() ? 2 : 1) : 0;
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | (m_startTask > 0 ? MF_CHECKED : 0), IDM_TASK_SETUP,
-                m_startTask > 0 ? L"Start without UAC prompt: change..." : L"Start without UAC prompt...");
-    AppendMenuW(menu, MF_STRING | (m_startTask > 0 ? 0 : MF_GRAYED), IDM_TASK_REMOVE, L"Remove start without UAC prompt");
+    // The task runs as the account that registers it, so only the signed-in user's own elevated
+    // token may set it up (an Intune EPM elevation runs under a different account).
+    const bool taskOk = m_rights == netcmd::Rights::Admin || m_demo;
+    const wchar_t* taskNote = taskOk ? L"" : L" (administrators only)";
+    AppendMenuW(menu, MF_STRING | (m_startTask > 0 ? MF_CHECKED : 0) | (taskOk ? 0 : MF_GRAYED), IDM_TASK_SETUP,
+                ((m_startTask > 0 ? L"Start without UAC prompt: change..." : L"Start without UAC prompt...") +
+                 std::wstring(taskNote)).c_str());
+    AppendMenuW(menu, MF_STRING | (m_startTask > 0 && taskOk ? 0 : MF_GRAYED), IDM_TASK_REMOVE,
+                L"Remove start without UAC prompt");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     const bool certInstalled = cert::HasEmbedded() && cert::IsInstalled();
     if (cert::HasEmbedded()) {
-        AppendMenuW(menu, MF_STRING | (certInstalled ? MF_CHECKED : 0), IDM_CERT, L"Trust signing certificate");
+        AppendMenuW(menu, MF_STRING | (certInstalled ? MF_CHECKED : 0) | (m_elevated || m_demo ? 0 : MF_GRAYED), IDM_CERT,
+                    m_elevated || m_demo ? L"Trust signing certificate" : L"Trust signing certificate (needs administrator)");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
     AppendMenuW(menu, MF_STRING, IDM_EXIT, L"Exit");
@@ -2168,9 +2202,9 @@ void MainWindow::ShowTrayMenu() {
         SetWindowPos(m_hwnd, m_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         settings::SaveGeneral(m_settings);
-    } else if (id == IDM_TASK_SETUP) {
+    } else if (id == IDM_TASK_SETUP && taskOk) {
         SetUpStartTask();
-    } else if (id == IDM_TASK_REMOVE) {
+    } else if (id == IDM_TASK_REMOVE && taskOk) {
         RemoveStartTask();
     } else if (id == IDM_CERT) {
         ToggleCertificate(certInstalled);
@@ -2225,7 +2259,7 @@ void MainWindow::ShowAdapterMenu(int ai, POINT screen) {
     for (int i = 0; i < (int)m_settings.presets.size(); ++i)
         AppendMenuW(apply, MF_STRING, IDM_APPLY_PRESET_BASE + i, m_settings.presets[i].name.c_str());
     if (m_settings.presets.empty()) AppendMenuW(apply, MF_STRING | MF_GRAYED, 0, L"(no presets)");
-    AppendMenuW(menu, MF_POPUP | (canUse && !m_busy ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(apply),
+    AppendMenuW(menu, MF_POPUP | (canUse && !m_busy && CanChangeAdapters() ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(apply),
                 L"Apply preset");
     AppendMenuW(menu, MF_STRING | (canUse ? 0 : MF_GRAYED), IDM_SAVE_PRESET, L"Save IPv4 config as preset...");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
