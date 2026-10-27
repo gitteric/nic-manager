@@ -183,7 +183,8 @@ private:
     // menus
     void ShowTrayMenu();
     void ShowAdapterMenu(int ai, POINT screen);
-    void ShowHostMenu(int rowIndex, POINT screen);  // host or group row: ping on/off, export; HOSTS: export
+    void ShowHostMenu(int rowIndex, POINT screen);
+    void ShowActionMenu(int rowIndex, POINT screen);  // action row: copy password (only when one is stored)  // host or group row: ping on/off, export; HOSTS: export
     void SetHostPing(int i, bool on);  // caller saves and syncs the pinger
     void ExportHosts(int group, int host);  // one host, one group with its hosts, or (-1, -1) all
     void ImportHosts();

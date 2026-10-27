@@ -5,6 +5,7 @@
 //   AlwaysOnTop  REG_DWORD  0/1
 //   MinimizeToTray REG_DWORD 0/1 (1: no taskbar button, minimize hides to tray)
 //   TightVncPath REG_SZ   full path of tvnviewer.exe (edited in the VNC action dialog)
+//   CerhostPath  REG_SZ   full path of cerhost.exe (edited in the cerhost action dialog)
 //   ExpandedAdapter REG_SZ  GUID of the adapter shown expanded (restored at start)
 //   HiddenAdapters REG_SZ   GUIDs of adapters hidden from the list, ';'-separated
 //   ShowHidden   REG_DWORD  0/1 (1: hidden adapters are listed anyway, dimmed)
@@ -29,6 +30,7 @@ struct AppSettings {
     bool alwaysOnTop = false;
     bool minimizeToTray = true;
     std::wstring tightVncPath;
+    std::wstring cerhostPath;
     std::wstring expandedAdapter;
     std::vector<std::wstring> hiddenAdapters;  // GUIDs
     bool showHidden = false;
@@ -57,6 +59,7 @@ std::string HostsExportJson(const std::vector<HostEntry>& hosts, const std::vect
 bool HostsImportJson(const std::string& utf8, std::vector<HostEntry>& hosts, std::vector<HostGroup>& groups,
                      std::wstring* err);
 void SaveTightVncPath(const std::wstring& path);
+void SaveCerhostPath(const std::wstring& path);
 void SaveExpandedAdapter(const std::wstring& guid);  // empty: none
 void SaveHiddenAdapters(const std::vector<std::wstring>& guids);
 

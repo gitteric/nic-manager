@@ -59,7 +59,7 @@ constexpr wchar_t kGlyphNewFolder = 0xE8F4;
 
 enum : UINT {
     IDM_SHOW = 100, IDM_PRESETS, IDM_TOPMOST, IDM_TO_TRAY, IDM_CERT, IDM_TASK_SETUP, IDM_TASK_REMOVE, IDM_EXIT, IDM_CYCLE_CUSTOM, IDM_SAVE_PRESET, IDM_REFRESH,
-    IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP, IDM_HIDE_ADAPTER, IDM_HOST_PING, IDM_HOST_EXPORT, IDM_IMPORT_HOSTS, IDM_IMPORT_PRESETS,
+    IDM_SCAN_ARP, IDM_SCAN_PING, IDM_SCAN_TCP, IDM_HIDE_ADAPTER, IDM_HOST_PING, IDM_HOST_EXPORT, IDM_IMPORT_HOSTS, IDM_IMPORT_PRESETS, IDM_COPY_PASSWORD,
     IDM_CYCLE_BASE = 200,
     IDM_DESIGN_BASE = 300,
     IDM_APPLY_PRESET_BASE = 1000,
@@ -79,16 +79,32 @@ void DrawStr(HDC dc, HFONT font, const std::wstring& s, RECT rc, COLORREF color,
     DrawTextW(dc, s.c_str(), (int)s.size(), &rc, flags | DT_NOPREFIX);
 }
 
-void CopyToClipboard(HWND owner, const std::wstring& text) {
-    if (!OpenClipboard(owner)) return;
+// `secret`: keeps the text out of the Windows clipboard history (Win+V) and
+// cloud clipboard sync.
+bool CopyToClipboard(HWND owner, const std::wstring& text, bool secret = false) {
+    if (!OpenClipboard(owner)) return false;
     EmptyClipboard();
+    bool ok = false;
     size_t bytes = (text.size() + 1) * sizeof(wchar_t);
     if (HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
         memcpy(GlobalLock(mem), text.c_str(), bytes);
         GlobalUnlock(mem);
-        if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
+        ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
+        if (!ok) GlobalFree(mem);
+    }
+    if (ok && secret) {
+        // Not ExcludeClipboardContentFromMonitorProcessing: that would also
+        // hide it from RDP clipboard redirection, a likely place to paste it.
+        for (const wchar_t* fmt : {L"CanIncludeInClipboardHistory", L"CanUploadToCloudClipboard"}) {
+            if (HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD))) {
+                *static_cast<DWORD*>(GlobalLock(mem)) = 0;
+                GlobalUnlock(mem);
+                if (!SetClipboardData(RegisterClipboardFormatW(fmt), mem)) GlobalFree(mem);
+            }
+        }
     }
     CloseClipboard();
+    return ok;
 }
 
 void DrawGlyph(HDC dc, HFONT font, wchar_t glyph, RECT rc, COLORREF color) {
@@ -1303,6 +1319,7 @@ void MainWindow::OnRButtonUp(POINT pt) {
     if (r.kind == RowKind::Adapter) ShowAdapterMenu(r.adapter, screen);
     else if (r.kind == RowKind::Host || (r.kind == RowKind::Group && !r.editSlot) || r.hostsHeader)
         ShowHostMenu(h.row, screen);
+    else if (r.kind == RowKind::Action) ShowActionMenu(h.row, screen);
 }
 
 bool MainWindow::IsBlockedWhileBusy(Cmd cmd) const {
@@ -1503,7 +1520,7 @@ void MainWindow::Execute(const Row* rowp, Cmd cmd) {
     case Cmd::RunAction:
         if (host && idx >= 0 && idx < (int)host->actions.size()) {
             const HostAction& act = host->actions[idx];
-            std::wstring err = actions::Run(*host, act, m_settings.tightVncPath);
+            std::wstring err = actions::Run(*host, act, m_settings.tightVncPath, m_settings.cerhostPath);
             if (!err.empty()) ShowToast(std::wstring(actions::TypeName(act)) + L" could not start", err, L"");
         }
         break;
@@ -1651,7 +1668,7 @@ void MainWindow::CommitEdit() {
     };
 
     if (t.kind == EditKind::Host || t.kind == EditKind::NewHost) {
-        if (!ip::IsValidHost(text)) return invalid(L"Enter an IPv4 address or host name");
+        if (!ip::IsValidHost(text)) return invalid(L"Enter an IPv4 address, host name or domain name");
         if (t.kind == EditKind::NewHost) {
             HostEntry e;
             e.name = e.address = text;
@@ -1967,11 +1984,15 @@ void MainWindow::CancelHostDrag() {
 }
 
 bool MainWindow::EditActionDialog(HostAction& act, const std::wstring& hostAddress, bool isNew) {
-    std::wstring vnc = m_settings.tightVncPath;
-    if (!dialogs::EditAction(m_hwnd, act, hostAddress, isNew, vnc)) return false;
+    std::wstring vnc = m_settings.tightVncPath, cerhost = m_settings.cerhostPath;
+    if (!dialogs::EditAction(m_hwnd, act, hostAddress, isNew, vnc, cerhost)) return false;
     if (vnc != m_settings.tightVncPath) {
         m_settings.tightVncPath = vnc;
         settings::SaveTightVncPath(vnc);
+    }
+    if (cerhost != m_settings.cerhostPath) {
+        m_settings.cerhostPath = cerhost;
+        settings::SaveCerhostPath(cerhost);
     }
     return true;
 }
@@ -2349,6 +2370,28 @@ void MainWindow::ShowHostMenu(int rowIndex, POINT screen) {
         SyncPinger();
         Relayout();
     }
+}
+
+void MainWindow::ShowActionMenu(int rowIndex, POINT screen) {
+    const Row row = m_rows[rowIndex];  // copy: a ping result may rebuild the rows while the menu is open
+    if (row.host < 0 || row.host >= (int)m_settings.hosts.size()) return;
+    const HostEntry& host = m_settings.hosts[row.host];
+    if (row.index < 0 || row.index >= (int)host.actions.size()) return;
+    if (actions::Password(host.actions[row.index]).empty()) return;  // nothing to offer
+
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, IDM_COPY_PASSWORD, L"Copy password");
+    UINT id = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, 0, m_hwnd, nullptr);
+    DestroyMenu(menu);
+
+    // Look the action up again: the hosts may have changed while the menu was open.
+    if (id != IDM_COPY_PASSWORD || row.host >= (int)m_settings.hosts.size() ||
+        row.index >= (int)m_settings.hosts[row.host].actions.size())
+        return;
+    const std::wstring& pw = actions::Password(m_settings.hosts[row.host].actions[row.index]);
+    if (pw.empty()) return;
+    if (CopyToClipboard(m_hwnd, pw, true)) SetStatus(L"Password copied", theme::TextDim, 2000);
+    else SetStatus(L"Could not open the clipboard", theme::Red, 3000);
 }
 
 void MainWindow::ExportHosts(int group, int host) {

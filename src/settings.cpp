@@ -180,6 +180,9 @@ json::Value HostsToJson(const std::vector<HostEntry>& hosts, int groupRef = 0) {
             } else if (auto* b = std::get_if<BrowserSettings>(&a.settings)) {
                 j.Set("type", "browser");
                 j.Set("url", Str(b->url));
+            } else if (auto* c = std::get_if<CerhostSettings>(&a.settings)) {
+                j.Set("type", "cerhost");
+                j.Set("password", Protect(c->password));
             }
             acts.Push(std::move(j));
         }
@@ -218,7 +221,7 @@ std::vector<HostEntry> HostsFromJson(const json::Value& arr) {
     for (const auto& o : arr.Items()) {
         HostEntry h;
         h.address = WStr(o["address"]);
-        if (!ip::IsValidHost(h.address)) continue;
+        if (!ip::IsStoredHost(h.address)) continue;
         h.name = Trim(WStr(o["name"]));
         if (h.name.empty()) h.name = h.address;
         h.ping = o["ping"].AsBool(true);
@@ -254,6 +257,8 @@ std::vector<HostEntry> HostsFromJson(const json::Value& arr) {
                             (port == (https ? 443 : 80) ? L"" : L":" + std::to_wstring(port));
                 }
                 a.settings = b;
+            } else if (type == "cerhost") {
+                a.settings = CerhostSettings{Unprotect(j["password"].AsString())};
             } else {
                 continue;
             }
@@ -270,6 +275,7 @@ std::string ProtectString(const std::wstring& plain) { return Protect(plain); }
 std::wstring UnprotectString(const std::string& stored) { return Unprotect(stored); }
 
 void SaveTightVncPath(const std::wstring& path) { WriteString(L"TightVncPath", path); }
+void SaveCerhostPath(const std::wstring& path) { WriteString(L"CerhostPath", path); }
 void SaveExpandedAdapter(const std::wstring& guid) { WriteString(L"ExpandedAdapter", guid); }
 
 void SaveHiddenAdapters(const std::vector<std::wstring>& guids) {
@@ -333,6 +339,7 @@ AppSettings Load() {
     s.alwaysOnTop = ReadDword(L"AlwaysOnTop", 0) != 0;
     s.minimizeToTray = ReadDword(L"MinimizeToTray", 1) != 0;
     s.tightVncPath = ReadString(L"TightVncPath");
+    s.cerhostPath = ReadString(L"CerhostPath");
     s.expandedAdapter = ReadString(L"ExpandedAdapter");
     const std::wstring hidden = ReadString(L"HiddenAdapters");
     for (size_t pos = 0; pos < hidden.size();) {

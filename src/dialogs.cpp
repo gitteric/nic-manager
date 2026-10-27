@@ -208,7 +208,8 @@ INT_PTR CALLBACK HostProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         if (LOWORD(wp) == IDOK) {
             std::wstring address = ItemText(dlg, IDC_HOST), name = ItemText(dlg, IDC_HOST_NAME);
             if (!ip::IsValidHost(address)) {
-                Warn(dlg, IDC_HOST, L"Enter a valid IPv4 address or host name.");
+                Warn(dlg, IDC_HOST,
+                     L"Enter an IPv4 address (192.168.1.10), a host name (nas01) or a domain name (srv.example.com).");
                 return TRUE;
             }
             *d->name = name.empty() ? address : name;
@@ -230,11 +231,30 @@ struct ActionData {
     std::wstring hostAddress;
     bool isNew;
     std::wstring* vncPath;
+    std::wstring* cerhostPath;
+    // The program path field is shared by VNC and cerhost; each keeps its
+    // text here while the other type is selected.
+    std::wstring vncText, cerhostText;
+    int pathType = -1;  // type whose path the field shows
 };
 
-enum ActionType { kRdp, kSsh, kVnc, kBrowser };
+enum ActionType { kRdp, kSsh, kVnc, kBrowser, kCerhost };  // = ActionSettings index
 
 int SelectedType(HWND dlg) { return (int)SendDlgItemMessageW(dlg, IDC_TYPE, CB_GETCURSEL, 0, 0); }
+
+// Swaps the shared program path field to the selected type's path.
+void ShowProgramPath(HWND dlg, ActionData* d, int type) {
+    if (d->pathType == kVnc) d->vncText = ItemText(dlg, IDC_VNCPATH);
+    else if (d->pathType == kCerhost) d->cerhostText = ItemText(dlg, IDC_VNCPATH);
+    if (type == kVnc) {
+        SetDlgItemTextW(dlg, IDC_LBL_VNC, L"TightVNC viewer (tvnviewer.exe, for all VNC actions)");
+        SetDlgItemTextW(dlg, IDC_VNCPATH, d->vncText.c_str());
+    } else if (type == kCerhost) {
+        SetDlgItemTextW(dlg, IDC_LBL_VNC, L"cerhost.exe (for all cerhost actions)");
+        SetDlgItemTextW(dlg, IDC_VNCPATH, d->cerhostText.c_str());
+    }
+    d->pathType = type;
+}
 
 void Place(HWND dlg, int id, int x, int y, int w, int h, bool show) {
     HWND c = GetDlgItem(dlg, id);
@@ -249,7 +269,7 @@ void Place(HWND dlg, int id, int x, int y, int w, int h, bool show) {
 void UpdateActionFields(HWND dlg, bool resetPort) {
     const int type = SelectedType(dlg);
     const bool browser = type == kBrowser, port = type == kSsh || type == kVnc, user = type == kRdp || type == kSsh;
-    const bool pass = !browser, mode = type == kRdp, vnc = type == kVnc;
+    const bool pass = !browser, mode = type == kRdp, exe = type == kVnc || type == kCerhost;
 
     // Other types connect to the host entry's address; the browser has its
     // own URL, preset to that address.
@@ -257,6 +277,7 @@ void UpdateActionFields(HWND dlg, bool resetPort) {
     SendDlgItemMessageW(dlg, IDC_HOST, EM_SETREADONLY, !browser, 0);
     auto* d = reinterpret_cast<ActionData*>(GetWindowLongPtrW(dlg, DWLP_USER));
     if (!browser && d) SetDlgItemTextW(dlg, IDC_HOST, d->hostAddress.c_str());
+    if (d) ShowProgramPath(dlg, d, type);
     if (resetPort && port) SetDlgItemInt(dlg, IDC_PORT, type == kSsh ? 22 : 5900, FALSE);
 
     int y = 35;
@@ -277,12 +298,12 @@ void UpdateActionFields(HWND dlg, bool resetPort) {
     r = row(pass);
     Place(dlg, IDC_LBL_PASS, 7, r, 172, 9, pass);
     Place(dlg, IDC_PASS, 7, r + 10, 172, 13, pass);
-    r = row(mode || vnc);
+    r = row(mode || exe);
     Place(dlg, IDC_LBL_MODE, 7, r, 172, 9, mode);
     Place(dlg, IDC_MODE, 7, r + 10, 172, 40, mode);
-    Place(dlg, IDC_LBL_VNC, 7, r, 172, 9, vnc);
-    Place(dlg, IDC_VNCPATH, 7, r + 10, 150, 13, vnc);
-    Place(dlg, IDC_BROWSE, 160, r + 10, 19, 13, vnc);
+    Place(dlg, IDC_LBL_VNC, 7, r, 172, 9, exe);
+    Place(dlg, IDC_VNCPATH, 7, r + 10, 150, 13, exe);
+    Place(dlg, IDC_BROWSE, 160, r + 10, 19, 13, exe);
     y += 2;
     Place(dlg, IDOK, 75, y, 50, 14, true);
     Place(dlg, IDCANCEL, 129, y, 50, 14, true);
@@ -305,7 +326,8 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_INITDIALOG: {
         d = reinterpret_cast<ActionData*>(lp);
         SetWindowLongPtrW(dlg, DWLP_USER, lp);
-        for (const wchar_t* t : {L"Remote Desktop (RDP)", L"SSH (Windows OpenSSH)", L"TightVNC", L"Browser"})
+        for (const wchar_t* t :
+             {L"Remote Desktop (RDP)", L"SSH (Windows OpenSSH)", L"TightVNC", L"Browser", L"cerhost (Windows CE)"})
             SendDlgItemMessageW(dlg, IDC_TYPE, CB_ADDSTRING, 0, (LPARAM)t);
         for (const wchar_t* t : {L"Full screen", L"Window 1024 x 768"})
             SendDlgItemMessageW(dlg, IDC_MODE, CB_ADDSTRING, 0, (LPARAM)t);
@@ -326,8 +348,11 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             SetDlgItemTextW(dlg, IDC_PASS, v->password.c_str());
         } else if (auto* b = std::get_if<BrowserSettings>(&s)) {
             if (!b->url.empty()) SetDlgItemTextW(dlg, IDC_HOST, b->url.c_str());
+        } else if (auto* c = std::get_if<CerhostSettings>(&s)) {
+            SetDlgItemTextW(dlg, IDC_PASS, c->password.c_str());
         }
-        SetDlgItemTextW(dlg, IDC_VNCPATH, (d->vncPath->empty() ? actions::FindTightVnc() : *d->vncPath).c_str());
+        d->vncText = d->vncPath->empty() ? actions::FindTightVnc() : *d->vncPath;
+        d->cerhostText = *d->cerhostPath;
         SetWindowTextW(dlg, d->isNew ? L"Add host action" : L"Edit host action");
         UpdateActionFields(dlg, false);
         InitDark(dlg);
@@ -341,12 +366,14 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             wchar_t buf[MAX_PATH] = {};
             std::wstring cur = ItemText(dlg, IDC_VNCPATH);
             wcsncpy(buf, cur.c_str(), MAX_PATH - 1);
+            const bool cerhost = SelectedType(dlg) == kCerhost;
             OPENFILENAMEW ofn{sizeof(ofn)};
             ofn.hwndOwner = dlg;
-            ofn.lpstrFilter = L"TightVNC viewer (tvnviewer.exe)\0tvnviewer.exe\0Programs (*.exe)\0*.exe\0";
+            ofn.lpstrFilter = cerhost ? L"cerhost (cerhost.exe)\0cerhost.exe\0Programs (*.exe)\0*.exe\0"
+                                      : L"TightVNC viewer (tvnviewer.exe)\0tvnviewer.exe\0Programs (*.exe)\0*.exe\0";
             ofn.lpstrFile = buf;
             ofn.nMaxFile = MAX_PATH;
-            ofn.lpstrTitle = L"Select the TightVNC viewer";
+            ofn.lpstrTitle = cerhost ? L"Select cerhost.exe" : L"Select the TightVNC viewer";
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
             if (GetOpenFileNameW(&ofn)) SetDlgItemTextW(dlg, IDC_VNCPATH, buf);
         } else if (LOWORD(wp) == IDOK) {
@@ -368,14 +395,19 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 return TRUE;
             }
             std::wstring pass = GetWindowTextStr(GetDlgItem(dlg, IDC_PASS));
-            if (type == kVnc) {
+            if (type == kVnc || type == kCerhost) {
                 std::wstring path = ItemText(dlg, IDC_VNCPATH);
                 DWORD attr = GetFileAttributesW(path.c_str());
-                if (!path.empty() && (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY))) {
-                    Warn(dlg, IDC_VNCPATH, L"The TightVNC viewer was not found at this path.");
+                if (type == kCerhost && path.empty()) {
+                    Warn(dlg, IDC_VNCPATH, L"Select cerhost.exe.");
                     return TRUE;
                 }
-                *d->vncPath = path;
+                if (!path.empty() && (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY))) {
+                    Warn(dlg, IDC_VNCPATH, type == kVnc ? L"The TightVNC viewer was not found at this path."
+                                                        : L"cerhost.exe was not found at this path.");
+                    return TRUE;
+                }
+                *(type == kVnc ? d->vncPath : d->cerhostPath) = path;
             }
             if (type == kRdp) {
                 bool full = SendDlgItemMessageW(dlg, IDC_MODE, CB_GETCURSEL, 0, 0) == 0;
@@ -384,6 +416,8 @@ INT_PTR CALLBACK ActionProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 d->action->settings = SshSettings{port, user, pass};
             } else if (type == kVnc) {
                 d->action->settings = VncSettings{port, pass};
+            } else if (type == kCerhost) {
+                d->action->settings = CerhostSettings{pass};
             } else {
                 d->action->settings = BrowserSettings{url};
             }
@@ -664,9 +698,10 @@ bool EditHost(HWND owner, std::wstring& name, std::wstring& address, bool& ping)
     return true;
 }
 
-bool EditAction(HWND owner, HostAction& action, const std::wstring& hostAddress, bool isNew, std::wstring& vncPath) {
+bool EditAction(HWND owner, HostAction& action, const std::wstring& hostAddress, bool isNew, std::wstring& vncPath,
+                std::wstring& cerhostPath) {
     HostAction copy = action;
-    ActionData d{&copy, hostAddress, isNew, &vncPath};
+    ActionData d{&copy, hostAddress, isNew, &vncPath, &cerhostPath};
     if (DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDD_ACTION), owner, ActionProc,
                         (LPARAM)&d) != IDOK)
         return false;

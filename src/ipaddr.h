@@ -15,10 +15,16 @@ std::wstring FormatIpv4(uint32_t hostOrder);
 // 169.254.0.0/16 (APIPA). Windows adds these on its own; never part of a config.
 bool IsLinkLocal(const std::wstring& s);
 
-// RFC 1123 host name (letters, digits, hyphens; labels 1..63; total <= 253).
+// RFC 1123 host name (letters, digits, hyphens; labels 1..63; total <= 253),
+// either a single label ("nas01") or a domain name whose top-level label
+// starts with a letter ("srv.example.com").
 bool IsValidHostname(const std::wstring& s);
-// IPv4 address or host name, as accepted for the ping list.
+// Plain IPv4 address (no leading zeros) or host name, as accepted for the
+// host list.
 bool IsValidHost(const std::wstring& s);
+// The looser rule of earlier versions, for hosts already saved: loading
+// must not drop an entry the user once added.
+bool IsStoredHost(const std::wstring& s);
 
 std::wstring PrefixToMask(int prefix);
 bool MaskToPrefix(const std::wstring& mask, int* prefix);

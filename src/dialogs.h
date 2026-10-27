@@ -28,8 +28,10 @@ bool EditGroup(HWND owner, std::wstring& name, bool& ping);
 
 // Edits `action` in place; returns false on cancel. Actions connect to
 // `hostAddress` (shown read-only; the browser URL is preset to it).
-// `vncPath` is the global TightVNC viewer path, shown with VNC actions.
-bool EditAction(HWND owner, HostAction& action, const std::wstring& hostAddress, bool isNew, std::wstring& vncPath);
+// `vncPath` and `cerhostPath` are the global TightVNC viewer and cerhost.exe
+// paths, shown with VNC and cerhost actions.
+bool EditAction(HWND owner, HostAction& action, const std::wstring& hostAddress, bool isNew, std::wstring& vncPath,
+                std::wstring& cerhostPath);
 
 // List with delete / export / import. Returns true if `presets` changed.
 bool ManagePresets(HWND owner, std::vector<Preset>& presets);

@@ -1,5 +1,5 @@
-// Host actions: RDP (mstsc), SSH (Windows OpenSSH), TightVNC viewer and the
-// default browser. Every launcher starts the client and returns at once.
+// Host actions: RDP (mstsc), SSH (Windows OpenSSH), TightVNC viewer, the
+// default browser and cerhost (Windows CE remote display). Every launcher starts the client and returns at once.
 #pragma once
 
 #include <windows.h>
@@ -16,11 +16,14 @@ std::wstring ConnectRdp(const std::wstring& host, const RdpSettings& s);
 std::wstring ConnectSsh(const std::wstring& host, const SshSettings& s);
 std::wstring ConnectTightVnc(const std::wstring& host, const VncSettings& s, const std::wstring& viewerPath);
 std::wstring OpenBrowser(const BrowserSettings& s);
+std::wstring ConnectCerhost(const std::wstring& host, const std::wstring& cerhostPath);
 
 // Dispatches to the above.
-std::wstring Run(const HostEntry& host, const HostAction& action, const std::wstring& tightVncPath);
+std::wstring Run(const HostEntry& host, const HostAction& action, const std::wstring& tightVncPath,
+                 const std::wstring& cerhostPath);
 
-const wchar_t* TypeName(const HostAction& action);  // "RDP", "SSH", "VNC", "Browser"
+const wchar_t* TypeName(const HostAction& action);  // "RDP", "SSH", "VNC", "Browser", "cerhost"
+const std::wstring& Password(const HostAction& action);  // stored password, empty for none (browser)
 std::wstring Describe(const HostAction& action);    // "RDP admin", "SSH root :2222", "Browser http://..."
 std::wstring BrowserUrl(const BrowserSettings& s);  // the URL, with http:// added when no scheme is given
 bool IsValidBrowserTarget(const std::wstring& s);   // http(s) URL or host[:port][/path]

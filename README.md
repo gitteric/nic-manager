@@ -4,7 +4,7 @@
 
 A small, fast tray tool for Windows 10/11 that switches network adapter IPv4
 settings, keeps IPv4 presets, watches a list of hosts with ping and connects to
-them with RDP, SSH, VNC or the browser in one click. It also scans a subnet
+them with RDP, SSH, VNC, cerhost or the browser in one click. It also scans a subnet
 for hosts (ARP, ping or a TCP port), without extra tools.
 
 Plain C++17 on the Win32 API: one ~2.5 MB executable for 64 or 32 bit, no
@@ -52,6 +52,8 @@ The screenshots were taken with `--demo` (sample adapters, nothing is changed).
   - **SSH** in a console window with the Windows OpenSSH client.
   - **VNC** with the TightVNC viewer.
   - **Browser** with the default browser.
+  - **cerhost** (Windows CE remote display): `cerhost.exe "<host>"`. A password can be stored for reference; it is not passed to cerhost.
+- Host addresses must be a plain IPv4 address (`192.168.1.10`), a host name (`nas01`) or a domain name (`srv.example.com`).
 - Groups: fold and unfold them, add hosts with the group's +, and drag hosts between groups and the top level. A group with ping off turns ping off for all its hosts.
 - Removing a group asks whether its hosts are removed too or move to the top level.
 - Passwords are encrypted with Windows DPAPI: only your Windows account on this PC can read them.
@@ -70,6 +72,7 @@ The screenshots were taken with `--demo` (sample adapters, nothing is changed).
 
 - On a host or group: **Ping** switches pinging on or off, **Export...** saves it as JSON (a group with its hosts).
 - On the HOSTS header: **Export...** saves all hosts and groups.
+- On an action with a stored password: **Copy password** puts it on the clipboard (kept out of the Windows clipboard history and cloud sync).
 - Tray menu **Import > Hosts...** reads such a file back. Entries with the same name are replaced by the file's.
 
 ### Subnet scan
@@ -263,6 +266,7 @@ Passwords are encrypted with DPAPI. Remove that key to reset the app.
 |---|---|
 | Windows OpenSSH client (built into Windows 10/11, version 8.4 or later) | SSH actions |
 | [TightVNC viewer](https://www.tightvnc.com/) | VNC actions; set its path in the VNC action dialog |
+| cerhost.exe (Windows CE remote display host) | cerhost actions; set its path in the cerhost action dialog |
 
 ## Project layout
 

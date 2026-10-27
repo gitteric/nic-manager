@@ -169,7 +169,7 @@ Behaviour I chose where your list left it open:
 - Gateways get a trash icon too, because a gateway is optional. Each list has a + in its caption to add an entry, shown only while that list is editable. DNS is limited to two servers.
 - Presets also have **Apply preset ▸** in the adapter context menu, because saving them is only half the job.
 - Address input accepts `10.0.0.5/16`, `10.0.0.5 255.255.0.0` or `10.0.0.5` (which means /24).
-- Hosts accept an IPv4 address or an RFC 1123 host name. `10.0.0` and `a..b` are rejected.
+- Hosts accept a plain IPv4 address or an RFC 1123 host name: a single label (`nas01`) or a domain name whose top-level label starts with a letter (`srv.example.com`). `10.0.0`, `010.0.0.1`, `192.168.1.5a`, `a..b` and `bad_host` are rejected. Hosts saved by earlier versions are loaded with the older, looser rule so none is lost.
 
 ### Storage (`HKCU\Software\NicManager`)
 
@@ -179,6 +179,7 @@ Behaviour I chose where your list left it open:
 | `WindowX`, `WindowY` | DWORD | last position |
 | `AlwaysOnTop` | DWORD | 0/1 |
 | `TightVncPath` | SZ | tvnviewer.exe path, edited in the VNC action dialog |
+| `CerhostPath` | SZ | cerhost.exe path, edited in the cerhost action dialog |
 | `MinimizeToTray` | DWORD | 1 (default): tray only, minimize hides; 0: taskbar button too |
 | `ExpandedAdapter` | SZ | GUID of the expanded adapter, expanded again at the next start if it still exists |
 | `HiddenAdapters` | SZ | GUIDs of hidden adapters, `;`-separated (adapter context menu "Hidden") |
@@ -242,6 +243,9 @@ The bottom bar counts the addresses done ("37/254"). While a scan runs, its scan
 - **SSH:** opens a console with Windows OpenSSH (`ssh -p <port> user@host`). The password reaches ssh through `SSH_ASKPASS`, which points to NIC Manager itself (OpenSSH 8.4 or later).
 - **VNC:** `tvnviewer -host= -port= -password=` with the TightVNC path from the settings.
 - **Browser:** the URL in the default browser (`http://` is added when no scheme is given).
+- **cerhost:** `"<CerhostPath>" "<host>"`. The stored password is not passed; right-click the action > **Copy password** to paste it.
+
+Right-click on an action with a stored password: **Copy password** (clipboard formats `CanIncludeInClipboardHistory` and `CanUploadToCloudClipboard` set to 0, so it stays out of Win+V history and cloud sync).
 
 ### Source map
 
@@ -255,7 +259,7 @@ The bottom bar counts the addresses done ("37/254"). While a scan runs, its scan
 | `src/settings.*` | registry, DPAPI, JSON mapping, file I/O |
 | `src/dialogs.*` | action editor, preset manager, text prompt |
 | `src/ipaddr.*`, `src/json.*` | validation and JSON |
-| `src/actions.*` | RDP (temp .rdp + mstsc), SSH (Windows OpenSSH + askpass), TightVNC, Browser |
+| `src/actions.*` | RDP (temp .rdp + mstsc), SSH (Windows OpenSSH + askpass), TightVNC, Browser, cerhost |
 | `src/scan.*` | subnet scans (ARP, ping, TCP port), MAC vendors, names |
 | `src/theme.h`, `src/model.h` | colours, data types |
 | `res/` | dialog templates, manifest (elevation, DPI, common controls v6) |

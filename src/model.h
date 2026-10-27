@@ -79,7 +79,13 @@ struct BrowserSettings {
     std::wstring url;  // http(s)://... or host[:port][/path]; http:// is assumed
 };
 
-using ActionSettings = std::variant<RdpSettings, SshSettings, VncSettings, BrowserSettings>;
+// Windows CE remote display (cerhost.exe). The password is only stored for
+// reference (copy from the right-click menu); cerhost does not take one.
+struct CerhostSettings {
+    std::wstring password;
+};
+
+using ActionSettings = std::variant<RdpSettings, SshSettings, VncSettings, BrowserSettings, CerhostSettings>;
 
 struct HostAction {
     ActionSettings settings;

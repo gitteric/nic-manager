@@ -240,6 +240,15 @@ std::wstring ConnectTightVnc(const std::wstring& host, const VncSettings& s, con
     return Spawn(viewer, args, 0, L"the TightVNC viewer", err) ? std::wstring() : err;
 }
 
+// ---- cerhost ------------------------------------------------------------
+
+std::wstring ConnectCerhost(const std::wstring& host, const std::wstring& cerhostPath) {
+    if (cerhostPath.empty()) return L"Set the cerhost.exe path in the cerhost action.";
+    if (!FileExists(cerhostPath)) return L"cerhost not found at " + cerhostPath + L".";
+    std::wstring err;
+    return Spawn(cerhostPath, Quote(host), 0, L"cerhost", err) ? std::wstring() : err;
+}
+
 // ---- Browser ------------------------------------------------------------
 
 namespace {
@@ -280,11 +289,13 @@ std::wstring OpenBrowser(const BrowserSettings& s) {
 
 // ---- dispatch -----------------------------------------------------------
 
-std::wstring Run(const HostEntry& host, const HostAction& action, const std::wstring& tightVncPath) {
+std::wstring Run(const HostEntry& host, const HostAction& action, const std::wstring& tightVncPath,
+                 const std::wstring& cerhostPath) {
     if (auto* r = std::get_if<RdpSettings>(&action.settings)) return ConnectRdp(host.address, *r);
     if (auto* p = std::get_if<SshSettings>(&action.settings)) return ConnectSsh(host.address, *p);
     if (auto* v = std::get_if<VncSettings>(&action.settings)) return ConnectTightVnc(host.address, *v, tightVncPath);
     if (auto* b = std::get_if<BrowserSettings>(&action.settings)) return OpenBrowser(*b);
+    if (std::holds_alternative<CerhostSettings>(action.settings)) return ConnectCerhost(host.address, cerhostPath);
     return {};
 }
 
@@ -293,8 +304,18 @@ const wchar_t* TypeName(const HostAction& action) {
     case 0: return L"RDP";
     case 1: return L"SSH";
     case 2: return L"VNC";
-    default: return L"Browser";
+    case 3: return L"Browser";
+    default: return L"cerhost";
     }
+}
+
+const std::wstring& Password(const HostAction& action) {
+    static const std::wstring none;
+    if (auto* r = std::get_if<RdpSettings>(&action.settings)) return r->password;
+    if (auto* p = std::get_if<SshSettings>(&action.settings)) return p->password;
+    if (auto* v = std::get_if<VncSettings>(&action.settings)) return v->password;
+    if (auto* c = std::get_if<CerhostSettings>(&action.settings)) return c->password;
+    return none;
 }
 
 std::wstring Describe(const HostAction& action) {

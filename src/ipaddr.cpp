@@ -35,11 +35,15 @@ std::wstring FormatIpv4(uint32_t v) {
            std::to_wstring((v >> 8) & 0xFF) + L"." + std::to_wstring(v & 0xFF);
 }
 
-bool IsValidHostname(const std::wstring& s) {
+namespace {
+// RFC 1123 labels: letters, digits, hyphens; 1..63 each; total <= 253.
+// `lastLabel` gets the offset of the last label, `allDigits` whether the
+// whole name is digits and dots.
+bool CheckLabels(const std::wstring& s, size_t* lastLabel, bool* allDigits) {
     if (s.empty() || s.size() > 253) return false;
-    bool allNumeric = true;
+    *allDigits = true;
     size_t start = 0;
-    while (start <= s.size()) {
+    while (true) {
         size_t dot = s.find(L'.', start);
         size_t end = dot == std::wstring::npos ? s.size() : dot;
         size_t len = end - start;
@@ -50,13 +54,29 @@ bool IsValidHostname(const std::wstring& s) {
             bool ok = (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') ||
                       c == L'-';
             if (!ok) return false;
-            if (!(c >= L'0' && c <= L'9')) allNumeric = false;
+            if (!(c >= L'0' && c <= L'9')) *allDigits = false;
         }
         if (dot == std::wstring::npos) break;
         start = dot + 1;
     }
+    *lastLabel = start;
+    return true;
+}
+
+bool IsLetter(wchar_t c) { return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z'); }
+}  // namespace
+
+bool IsValidHostname(const std::wstring& s) {
+    size_t last;
+    bool allDigits;
+    if (!CheckLabels(s, &last, &allDigits)) return false;
     // "10.0.0" or "300.1.1.1" are malformed addresses, not host names.
-    return !allNumeric;
+    if (allDigits) return false;
+    // A single label ("nas", "3d-printer") may start with a digit. The
+    // top-level label of a domain name ("com", "local") starts with a
+    // letter, which rejects mistyped addresses such as "192.168.1.5a".
+    if (last == 0) return true;
+    return IsLetter(s[last]);
 }
 
 bool IsLinkLocal(const std::wstring& s) {
@@ -64,7 +84,18 @@ bool IsLinkLocal(const std::wstring& s) {
     return ParseIpv4(s, &v) && (v >> 16) == 0xA9FE;
 }
 
-bool IsValidHost(const std::wstring& s) { return ParseIpv4(s) || IsValidHostname(s); }
+bool IsValidHost(const std::wstring& s) {
+    // Plain dotted quad only: "010.0.0.1" is octal 8.0.0.1 to some Windows APIs.
+    uint32_t v;
+    if (ParseIpv4(s, &v)) return FormatIpv4(v) == s;
+    return IsValidHostname(s);
+}
+
+bool IsStoredHost(const std::wstring& s) {
+    size_t last;
+    bool allDigits;
+    return ParseIpv4(s) || (CheckLabels(s, &last, &allDigits) && !allDigits);
+}
 
 std::wstring PrefixToMask(int prefix) {
     if (prefix <= 0) return L"0.0.0.0";
