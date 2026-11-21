@@ -221,6 +221,17 @@ Host export file (right-click on the HOSTS header, a group or a host > Export):
 
 `group` is an index into `groups`, -1 for the top level. A single-host export has no `groups` and no `group`. Passwords stay DPAPI-encrypted, so they only decrypt for the same Windows user on the same PC. Import (tray menu Import > Hosts) replaces groups and hosts with the same name (case-insensitive) by the file's version; a host without `group` keeps the group it already has.
 
+Full backup (tray menu Export > All, Import > All):
+
+```json
+{ "format": "nic-manager-backup", "version": 1,
+  "settings": { "pingCycleMs": 5000, "alwaysOnTop": false, "minimizeToTray": true, "design": 0,
+                "tightVncPath": "", "cerhostPath": "" },
+  "groups": [ ... ], "hosts": [ ... ], "presets": [ ... ] }
+```
+
+`groups`, `hosts` and `presets` have the same form as in the host and preset files, so Import > Hosts and Import > Presets also read a backup. Import > All merges hosts, groups and presets by name like those imports, and takes the options from the file; a program path is only taken when the file has one. Window position and hidden adapters belong to the PC and are not part of the backup.
+
 ### Subnet scans
 
 Each adapter IP address row has a scan button (magnifier) that offers ARP, ping or a TCP port check of that address's subnet, limited to /24 or smaller (larger subnets show a hint instead). `src/scan.cpp` needs no external tool, no Npcap and no administrator rights. It probes 64 addresses at a time, one try each:
@@ -240,7 +251,7 @@ The bottom bar counts the addresses done ("37/254"). While a scan runs, its scan
 `src/actions.cpp` starts the clients and returns at once:
 
 - **RDP:** writes `%TEMP%\NicManager\<host>.rdp` (UTF-16, only clipboard redirection, password as a DPAPI blob in `password 51:b:`), starts `mstsc` with it and deletes the file after 30 s.
-- **SSH:** opens a console with Windows OpenSSH (`ssh -p <port> user@host`). The password reaches ssh through `SSH_ASKPASS`, which points to NIC Manager itself (OpenSSH 8.4 or later).
+- **SSH:** opens a console with Windows OpenSSH (`ssh -p <port> user@host`). Before each connect, `ssh-keygen -R` removes the host's stored key, so a reinstalled device with a new key connects (accept-new stores the new key) instead of failing with "REMOTE HOST IDENTIFICATION HAS CHANGED". The password reaches ssh through `SSH_ASKPASS`, which points to NIC Manager itself (OpenSSH 8.4 or later).
 - **VNC:** `tvnviewer -host= -port= -password=` with the TightVNC path from the settings.
 - **Browser:** the URL in the default browser (`http://` is added when no scheme is given).
 - **cerhost:** `"<CerhostPath>" "<host>"`. The stored password is not passed; right-click the action > **Copy password** to paste it.

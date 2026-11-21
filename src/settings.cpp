@@ -414,6 +414,67 @@ bool HostsImportJson(const std::string& utf8, std::vector<HostEntry>& hosts, std
     return true;
 }
 
+int MergePresets(std::vector<Preset>& presets, const std::vector<Preset>& in) {
+    for (const auto& p : in) {
+        auto it = std::find_if(presets.begin(), presets.end(),
+                               [&](const Preset& e) { return _wcsicmp(e.name.c_str(), p.name.c_str()) == 0; });
+        if (it != presets.end()) *it = p;
+        else presets.push_back(p);
+    }
+    return (int)in.size();
+}
+
+std::string BackupExportJson(const AppSettings& s) {
+    json::Value root = json::Value::Object();
+    root.Set("format", "nic-manager-backup");
+    root.Set("version", 1);
+    json::Value g = json::Value::Object();
+    g.Set("pingCycleMs", (int)s.pingCycleMs);
+    g.Set("alwaysOnTop", s.alwaysOnTop);
+    g.Set("minimizeToTray", s.minimizeToTray);
+    g.Set("design", s.design);
+    g.Set("tightVncPath", Str(s.tightVncPath));
+    g.Set("cerhostPath", Str(s.cerhostPath));
+    root.Set("settings", std::move(g));
+    root.Set("groups", GroupsToJson(s.groups));
+    root.Set("hosts", HostsToJson(s.hosts, 1));
+    json::Value presets = json::Value::Object();
+    json::Parse(PresetsToJson(s.presets), presets);
+    root.Set("presets", presets["presets"]);
+    return json::Write(root, true);
+}
+
+bool BackupImportJson(const std::string& utf8, AppSettings& out, std::wstring* err) {
+    json::Value root;
+    std::string perr;
+    if (!json::Parse(utf8, root, &perr)) {
+        if (err) *err = L"Not valid JSON: " + Utf8ToWide(perr);
+        return false;
+    }
+    if (root["format"].AsString() != "nic-manager-backup") {
+        if (err) *err = L"Not a NIC Manager backup. Use Import > Hosts or Presets for those files.";
+        return false;
+    }
+    // Options missing from the file keep the values passed in.
+    AppSettings a;
+    a.pingCycleMs = out.pingCycleMs;
+    a.alwaysOnTop = out.alwaysOnTop;
+    a.minimizeToTray = out.minimizeToTray;
+    a.design = out.design;
+    const json::Value& g = root["settings"];
+    a.pingCycleMs = (DWORD)std::clamp(g["pingCycleMs"].AsInt((int)a.pingCycleMs), (int)kMinPingCycleMs,
+                                      (int)kMaxPingCycleMs);
+    a.alwaysOnTop = g["alwaysOnTop"].AsBool(a.alwaysOnTop);
+    a.minimizeToTray = g["minimizeToTray"].AsBool(a.minimizeToTray);
+    a.design = g["design"].AsInt(a.design);
+    a.tightVncPath = WStr(g["tightVncPath"]);
+    a.cerhostPath = WStr(g["cerhostPath"]);
+    if (root["hosts"].IsArray() && !HostsImportJson(utf8, a.hosts, a.groups, err)) return false;
+    if (root["presets"].IsArray() && !PresetsFromJson(utf8, a.presets, err)) return false;
+    out = std::move(a);
+    return true;
+}
+
 void SavePresets(const std::vector<Preset>& presets) { WriteString(L"Presets", Utf8ToWide(PresetsToJson(presets))); }
 
 bool ReadFileUtf8(const std::wstring& path, std::string& out) {

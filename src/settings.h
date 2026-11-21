@@ -58,6 +58,17 @@ std::string HostsExportJson(const std::vector<HostEntry>& hosts, const std::vect
 // hosts[i].group: index into groups, -1 top level, -2 not given (an existing host keeps its group).
 bool HostsImportJson(const std::string& utf8, std::vector<HostEntry>& hosts, std::vector<HostGroup>& groups,
                      std::wstring* err);
+// Full backup (UTF-8 JSON): {"format":"nic-manager-backup","version":1,"settings":{...},
+// "groups":[...],"hosts":[...],"presets":[...]}. Hosts and presets use the formats of their
+// own export files, so Import > Hosts and Import > Presets also read a backup.
+// "settings": ping cycle, always on top, minimize to tray, design and the program paths.
+std::string BackupExportJson(const AppSettings& s);
+// Fills hosts, groups, presets, options and paths of `out`; options missing from the
+// file keep the values `out` had. Paths are empty when the file has none.
+bool BackupImportJson(const std::string& utf8, AppSettings& out, std::wstring* err);
+// Same name (case-insensitive) replaces the existing preset; returns the number merged.
+int MergePresets(std::vector<Preset>& presets, const std::vector<Preset>& in);
+
 void SaveTightVncPath(const std::wstring& path);
 void SaveCerhostPath(const std::wstring& path);
 void SaveExpandedAdapter(const std::wstring& guid);  // empty: none

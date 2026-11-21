@@ -188,6 +188,12 @@ private:
     void SetHostPing(int i, bool on);  // caller saves and syncs the pinger
     void ExportHosts(int group, int host);  // one host, one group with its hosts, or (-1, -1) all
     void ImportHosts();
+    // Merges by name (case-insensitive, the incoming entry wins); in[i].group indexes inGroups,
+    // -2 keeps an existing host's group.
+    void MergeHosts(std::vector<HostEntry> in, const std::vector<HostGroup>& inGroups);
+    void ExportPresets();  // tray Export > Presets: all presets
+    void ExportBackup();   // tray Export > All: hosts, groups, presets and options in one file
+    void ImportBackup();   // tray Import > All
     void ShowWindowNear(bool show = true);
     void ToggleVisible();
     void ShowRestored();

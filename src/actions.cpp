@@ -166,15 +166,22 @@ std::wstring ConnectSsh(const std::wstring& host, const SshSettings& s) {
     if (!FileExists(ssh))
         return L"The Windows OpenSSH client is not installed (Settings > Apps > Optional features > OpenSSH Client).";
 
-    // accept-new trusts a host key on first contact but still refuses a
-    // changed one; one password attempt so a wrong password fails at once.
+    // The host's old key is removed first (devices get reinstalled and
+    // change keys), then accept-new stores the current one. ssh with
+    // StrictHostKeyChecking=no would connect too, but disables password
+    // login when the key changed. One password attempt so a wrong password
+    // fails at once.
     std::wstring target = s.user.empty() ? host : s.user + L"@" + host;
     std::wstring args = L"-p " + std::to_wstring(s.port) +
                         L" -o StrictHostKeyChecking=accept-new -o NumberOfPasswordPrompts=1 " + Quote(target);
     // cmd keeps the window open with the error when ssh fails. cmd runs
     // natively, so it gets ssh's System32 path, not the Sysnative alias.
     const std::wstring sshForCmd = ChildSystemDir() + L"\\OpenSSH\\ssh.exe";
-    std::wstring line = L"/s /c \"title SSH " + target + L" & " + Quote(sshForCmd) + L" " + args + L" || pause\"";
+    const std::wstring keygenForCmd = ChildSystemDir() + L"\\OpenSSH\\ssh-keygen.exe";
+    // known_hosts names a non-default port as [host]:port.
+    std::wstring knownName = s.port == 22 ? host : L"[" + host + L"]:" + std::to_wstring(s.port);
+    std::wstring line = L"/s /c \"title SSH " + target + L" & " + Quote(keygenForCmd) + L" -R " + Quote(knownName) +
+                        L" >nul 2>&1 & " + Quote(sshForCmd) + L" " + args + L" || pause\"";
 
     // ssh.exe asks this executable for the password (SSH_ASKPASS); the
     // password travels DPAPI-encrypted in the environment of the child only.

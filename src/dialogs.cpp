@@ -484,17 +484,6 @@ void UpdatePresetButtons(HWND dlg, const std::vector<Preset>& presets) {
     SetDlgItemTextW(dlg, IDC_EXPORT, sel ? L"Export..." : L"Export all...");
 }
 
-// Same name (case-insensitive) replaces the existing preset; returns the number imported.
-int MergePresets(std::vector<Preset>& presets, const std::vector<Preset>& in) {
-    for (const auto& p : in) {
-        auto it = std::find_if(presets.begin(), presets.end(),
-                               [&](const Preset& e) { return _wcsicmp(e.name.c_str(), p.name.c_str()) == 0; });
-        if (it != presets.end()) *it = p;
-        else presets.push_back(p);
-    }
-    return (int)in.size();
-}
-
 INT_PTR CALLBACK PresetsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     auto* d = reinterpret_cast<PresetsData*>(GetWindowLongPtrW(dlg, DWLP_USER));
     switch (msg) {
@@ -546,7 +535,7 @@ INT_PTR CALLBACK PresetsProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 MessageBoxW(dlg, err.c_str(), L"Import failed", MB_OK | MB_ICONERROR);
                 break;
             }
-            MergePresets(presets, in);
+            settings::MergePresets(presets, in);
             d->changed = d->changed || !in.empty();
             FillPresetList(dlg, presets);
             UpdatePresetButtons(dlg, presets);
@@ -730,7 +719,7 @@ int ImportPresets(HWND owner, std::vector<Preset>& presets) {
         MessageBoxW(owner, err.c_str(), L"Import failed", MB_OK | MB_ICONERROR);
         return -1;
     }
-    return MergePresets(presets, in);
+    return settings::MergePresets(presets, in);
 }
 
 }  // namespace dialogs

@@ -71,6 +71,7 @@ The screenshots were taken with `--demo` (sample adapters, nothing is changed).
 </p>
 
 - On a host or group: **Ping** switches pinging on or off, **Export...** saves it as JSON (a group with its hosts).
+- On a host: **Copy &lt;address&gt;** puts its IP address or host name on the clipboard.
 - On the HOSTS header: **Export...** saves all hosts and groups.
 - On an action with a stored password: **Copy password** puts it on the clipboard (kept out of the Windows clipboard history and cloud sync).
 - Tray menu **Import > Hosts...** reads such a file back. Entries with the same name are replaced by the file's.
@@ -103,7 +104,8 @@ The screenshots were taken with `--demo` (sample adapters, nothing is changed).
 
 - A left click on the tray icon shows or hides the window.
 - **Edit presets**: the saved IPv4 presets, with delete, export (the selected ones, or all) and import.
-- **Import**: hosts or presets from a JSON file.
+- **Import**: hosts, presets, or **All (backup)** from a JSON file. Entries with the same name are replaced by the file's.
+- **Export**: hosts, presets, or **All (backup)**: hosts, groups, presets, options and program paths in one file. Passwords stay DPAPI-encrypted, so they only come back for the same Windows user on the same PC.
 - **Ping cycle**: 0.5 s to 30 s, or a custom value from 0.1 s.
 - **Always on top**, **Minimize to tray** (without it the window also has a taskbar button). The window stays inside the screen and snaps to its edges.
 - **Design**: Standard or Color-blind friendly (blue/orange instead of green/red).
